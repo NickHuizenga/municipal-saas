@@ -1,5 +1,3 @@
-'use client';
-
 import React from 'react';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
@@ -12,15 +10,13 @@ const supabase = createBrowserClient(
 
 const Page: React.FC = () => {
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 grid place-items-center p-6">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6">
-        <h1 className="text-xl font-semibold mb-3">Sign in</h1>
-        <p className="text-sm text-neutral-400 mb-4">
-          Enter your email and we’ll send you a magic link.
-        </p>
+    <div style={{minHeight:'100vh',display:'grid',placeItems:'center',color:'#e5e5e5',background:'#0a0a0a',padding:'24px'}}>
+      <div style={{width:'100%',maxWidth:480,border:'1px solid #262626',borderRadius:16,background:'#111111',padding:'24px'}}>
+        <h1 style={{fontSize:20,marginBottom:12}}>Sign in</h1>
+        <p style={{fontSize:14,color:'#a3a3a3',marginBottom:16}}>We’ll email you a magic link.</p>
         <Auth
           supabaseClient={supabase}
-          appearance={{ theme: ThemeSupa, variables: { default: { colors: { brand: '#10b981', brandAccent: '#34d399' } } } }}
+          appearance={{ theme: ThemeSupa }}
           providers={[]}
           view="magic_link"
           redirectTo={`${typeof window !== 'undefined' ? window.location.origin : ''}/tenant/select`}
