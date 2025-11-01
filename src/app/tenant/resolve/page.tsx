@@ -15,29 +15,44 @@ async function getContext() {
   const tenantId = cookies().get('tenant_id')?.value;
   if (!tenantId) return { redirect: '/tenant/select' as const };
 
-  const { data: membership } = await supabase
+  // 1) Get your role for this tenant (no join = no TS fuss)
+  const { data: membership, error: mErr } = await supabase
     .from('memberships')
-    .select('role, tenants:tenant_id(name, id)')
+    .select('role')
     .eq('tenant_id', tenantId)
     .maybeSingle();
 
+  if (mErr) throw mErr;
   if (!membership) return { redirect: '/tenant/select' as const };
 
-  const { data: tfs } = await supabase
+  // 2) Get the tenant name in a separate query
+  const { data: tenant, error: tErr } = await supabase
+    .from('tenants')
+    .select('name')
+    .eq('id', tenantId)
+    .maybeSingle();
+
+  if (tErr) throw tErr;
+
+  // 3) Get feature flags for this tenant
+  const { data: tfs, error: fErr } = await supabase
     .from('tenant_features')
     .select('feature_key, enabled')
     .eq('tenant_id', tenantId);
 
+  if (fErr) throw fErr;
+
   const enabled: Record<string, boolean> = {};
-  (tfs ?? []).forEach(tf => { enabled[tf.feature_key] = tf.enabled; });
+  (tfs ?? []).forEach((tf: any) => { enabled[tf.feature_key] = tf.enabled; });
 
   return {
-    tenantName: membership.tenants.name,
+    tenantName: tenant?.name ?? 'Selected Tenant',
     role: membership.role as string,
     perms: compute(enabled),
     featuresEnabled: enabled
   };
 }
+
 
 export default async function ResolvePage() {
   const res = await getContext();
