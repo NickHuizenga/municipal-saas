@@ -1,8 +1,7 @@
-// src/app/login/page.tsx
 'use client';
 
 import { useMemo } from 'react';
-import { Auth, ThemeSupa } from '@supabase/auth-ui-react';
+import { Auth } from '@supabase/auth-ui-react'; // ⬅ no ThemeSupa
 import { createBrowserClient } from '@supabase/ssr';
 
 export default function LoginPage() {
@@ -15,9 +14,7 @@ export default function LoginPage() {
     []
   );
 
-  // Must point to a real callback route that exchanges the code for a session
-  const redirectTo =
-    `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`;
+  const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`;
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6">
@@ -25,10 +22,10 @@ export default function LoginPage() {
         <Auth
           supabaseClient={supabase}
           view="magic_link"
-          appearance={{ theme: ThemeSupa }}
+          // appearance removed (no ThemeSupa)
           redirectTo={redirectTo}
           showLinks={false}
-          providers={[]} // email-only (magic link)
+          providers={[]} // email-only
         />
       </div>
     </main>
