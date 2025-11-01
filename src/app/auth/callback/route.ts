@@ -10,7 +10,6 @@ export async function GET(request: Request) {
 
   const cookieStore = cookies();
 
-  // Build a server-side Supabase client that can set auth cookies
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
@@ -30,7 +29,6 @@ export async function GET(request: Request) {
   );
 
   if (code) {
-    // This exchanges the code for a session and writes the cookies
     await supabase.auth.exchangeCodeForSession(code);
   }
 
