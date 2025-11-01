@@ -1,9 +1,7 @@
-'use client';
-
 export default function LoginStub() {
   return (
     <div style={{minHeight:'100vh',display:'grid',placeItems:'center',color:'#e5e5e5',background:'#0a0a0a'}}>
-      <div>/app/login (stub) — if you see this, routing works.</div>
+      <div>Login (stub) — routing is working.</div>
     </div>
   );
 }
