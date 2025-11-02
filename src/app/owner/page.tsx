@@ -47,9 +47,9 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* -------------------- Server Actions -------------------- */
+/* -------------------- Server Actions (file-local, not exported) -------------------- */
 
-export async function doUpdateFeatures(_prev: any, formData: FormData) {
+async function doUpdateFeatures(_prev: any, formData: FormData) {
   "use server";
   const supabase = getSupabaseServer();
 
@@ -75,18 +75,14 @@ export async function doUpdateFeatures(_prev: any, formData: FormData) {
 
   if (pErr || !prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
 
-  const { error } = await supabase
-    .from("tenants")
-    .update({ features: flags })
-    .eq("id", tenant_id);
-
+  const { error } = await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
   if (error) return { ok: false, error: error.message };
 
-  // Next 14: redirect to refresh the page
+  // Next 14 refresh
   redirect("/owner");
 }
 
-export async function doUpdateRole(_prev: any, formData: FormData) {
+async function doUpdateRole(_prev: any, formData: FormData) {
   "use server";
   const supabase = getSupabaseServer();
 
@@ -190,7 +186,7 @@ export default async function OwnerDashboard() {
     .select("tenant_id, user_id, role")
     .in("tenant_id", tenantIds);
 
-  // gather user names from profiles (best effort)
+  // names from profiles (best effort)
   const userIds = Array.from(new Set((mrows ?? []).map((m) => String(m.user_id))));
   const { data: prow } = userIds.length
     ? await supabase.from("profiles").select("id, full_name").in("id", userIds)
@@ -211,7 +207,7 @@ export default async function OwnerDashboard() {
     membersByTenant.set(tid, arr);
   });
 
-  // fill member counts
+  // fill counts
   tenants.forEach((t) => {
     t.memberCount = membersByTenant.get(t.id)?.length ?? 0;
   });
@@ -240,12 +236,10 @@ export default async function OwnerDashboard() {
                 key={t.id}
                 className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
               >
-                {/* Header row */}
+                {/* Header */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
-                      {t.name}
-                    </div>
+                    <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">{t.name}</div>
                     <div className="text-xs text-[rgb(var(--muted-foreground))]">{t.id}</div>
                   </div>
                   <div className="text-xs rounded-full border border-[rgb(var(--border))] px-2 py-0.5 text-[rgb(var(--muted-foreground))]">
@@ -253,7 +247,7 @@ export default async function OwnerDashboard() {
                   </div>
                 </div>
 
-                {/* Current module chips */}
+                {/* Module chips */}
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {enabled.length > 0 ? (
                     enabled.map(([key]) => (
@@ -265,17 +259,14 @@ export default async function OwnerDashboard() {
                       </span>
                     ))
                   ) : (
-                    <span className="text-xs text-[rgb(var(--muted-foreground))] italic">
-                      No modules enabled
-                    </span>
+                    <span className="text-xs text-[rgb(var(--muted-foreground))] italic">No modules enabled</span>
                   )}
                 </div>
 
-                {/* Manage details */}
+                {/* Manage */}
                 <details className="group mt-4">
                   <summary className="list-none cursor-pointer inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]">
-                    Manage
-                    <span className="ml-2 transition group-open:rotate-180">▾</span>
+                    Manage <span className="ml-2 transition group-open:rotate-180">▾</span>
                   </summary>
 
                   <div className="mt-3 space-y-4">
@@ -292,9 +283,7 @@ export default async function OwnerDashboard() {
                               defaultChecked={!!t.features?.[k]}
                               className="accent-[rgb(var(--accent))]"
                             />
-                            <span className="text-[rgb(var(--muted-foreground))]">
-                              {formatModuleName(String(k))}
-                            </span>
+                            <span className="text-[rgb(var(--muted-foreground))]">{formatModuleName(String(k))}</span>
                           </label>
                         ))}
                       </div>
