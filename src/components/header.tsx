@@ -24,12 +24,23 @@ export default async function Header() {
   const tenantCookieName = process.env.TENANT_COOKIE_NAME || "tenant_id";
   const tenantId = cookies().get(tenantCookieName)?.value;
 
+  // Platform owner flag (global)
+  let isPlatformOwner = false;
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_platform_owner, full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    isPlatformOwner = !!profile?.is_platform_owner;
+  }
+
+  // Tenant-scoped info
   let role: Role | undefined;
   let tenantName: string | undefined;
   let features: TenantFeatures = {};
 
   if (user && tenantId) {
-    // Join membership to tenant to get role + feature flags
     const { data } = await supabase
       .from("tenant_memberships")
       .select("role, tenants!inner(name, features)")
@@ -39,22 +50,40 @@ export default async function Header() {
 
     role = (data?.role as Role) || undefined;
     tenantName = (data as any)?.tenants?.name;
-    // features can be a JSONB column on tenants; default to {}
     features = ((data as any)?.tenants?.features ?? {}) as TenantFeatures;
   }
 
-  // Build nav based on permissions + feature flags
+  // Nav items — platform owner sees ALL modules regardless of membership/flags
   const items: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: "Dashboard", show: true },
     { href: "/tenant/select", label: "Tenants", show: true },
-    // Module links (toggle via flags)
-    { href: "/work-orders", label: "Work Orders", show: !!features.work_orders },
-    { href: "/sampling", label: "Sampling & Compliance", show: !!features.sampling },
-    { href: "/mft", label: "MFT Tracker", show: !!features.mft },
-    { href: "/grants", label: "Grants", show: !!features.grants },
-    // Admin-only links
-    { href: "/settings/members", label: "Members", show: isOwnerOrAdmin(role) },
-    { href: "/settings/invite", label: "Invite", show: isOwnerOrAdmin(role) },
+    { href: "/owner", label: "Owner Dashboard", show: isPlatformOwner },
+
+    // Module links
+    {
+      href: "/work-orders",
+      label: "Work Orders",
+      show: isPlatformOwner || !!features.work_orders,
+    },
+    {
+      href: "/sampling",
+      label: "Sampling & Compliance",
+      show: isPlatformOwner || !!features.sampling,
+    },
+    { href: "/mft", label: "MFT Tracker", show: isPlatformOwner || !!features.mft },
+    { href: "/grants", label: "Grants", show: isPlatformOwner || !!features.grants },
+
+    // Admin links
+    {
+      href: "/settings/members",
+      label: "Members",
+      show: isPlatformOwner || isOwnerOrAdmin(role),
+    },
+    {
+      href: "/settings/invite",
+      label: "Invite",
+      show: isPlatformOwner || isOwnerOrAdmin(role),
+    },
   ];
 
   return (
@@ -62,16 +91,22 @@ export default async function Header() {
       <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-muted-foreground leading-none">
-            {tenantName ? `Tenant:` : `No tenant selected`}
+            {isPlatformOwner ? "Platform Owner" : tenantName ? "Tenant" : "No tenant selected"}
           </div>
           <div className="text-base font-medium truncate">
-            {tenantName ?? (
+            {isPlatformOwner ? (
+              <>
+                <Link href="/owner" className="underline">Owner Dashboard</Link>
+              </>
+            ) : tenantName ? (
+              tenantName
+            ) : (
               <Link href="/tenant/select" className="underline">Choose a tenant</Link>
             )}
           </div>
         </div>
 
-        <nav className="hidden md:flex items-center gap-4 text-sm">
+        <nav className="hidden md:flex items-center gap-2 text-sm">
           {items.filter(i => i.show).map(i => (
             <Link
               key={i.href}
@@ -84,14 +119,14 @@ export default async function Header() {
         </nav>
 
         <div className="md:hidden">
-          {/* Simple overflow menu for mobile (optional to enhance later) */}
+          {/* Simple mobile entry-point; expand later */}
           <Link href="/tenant/select" className="rounded-lg px-3 py-1.5 border">
             Menu
           </Link>
         </div>
       </div>
 
-      {!tenantId && (
+      {!tenantId && !isPlatformOwner && (
         <div className="bg-amber-50 text-amber-900 border-t border-amber-200">
           <div className="mx-auto max-w-6xl px-4 py-2 text-sm">
             You don’t have a tenant active. Go to{" "}
