@@ -1,6 +1,4 @@
-// Server-side Supabase client for App Router (uses cookies)
-// Works with @supabase/ssr 0.0.10 (the version we pinned)
-
+// Server-side Supabase client (App Router) – works with @supabase/ssr 0.0.10
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
