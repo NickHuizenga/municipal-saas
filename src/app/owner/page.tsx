@@ -48,7 +48,7 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* -------------------- Server Actions (one-arg; SmartForm handles reload) -------------------- */
+/* -------------------- Server Actions -------------------- */
 
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
@@ -67,17 +67,33 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) redirect("/login");
 
-  const { data: prof } = await supabase
+  // Must be platform owner
+  const { data: prof, error: pErr } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", auth.user.id)
     .maybeSingle();
+  if (pErr || !prof?.is_platform_owner) redirect("/");
 
-  if (!prof?.is_platform_owner) redirect("/");
+  // Update and immediately read back to confirm it stuck
+  const { data, error } = await supabase
+    .from("tenants")
+    .update({ features: flags })
+    .eq("id", tenant_id)
+    .select("id, features")
+    .maybeSingle();
 
-  await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
+  if (error) {
+    // RLS or type mismatch most likely; bail without reload
+    return;
+  }
+  // If DB still doesn't reflect what we set, also bail (no reload)
+  if (!data?.features || data.features.grants !== flags.grants || data.features.sampling !== flags.sampling ||
+      data.features.work_orders !== flags.work_orders || data.features.mft !== flags.mft) {
+    return;
+  }
 
-  // No redirect here; SmartForm will flash + reload on the client
+  // SmartForm will flash + reload
   return;
 }
 
@@ -95,30 +111,23 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) redirect("/login");
 
-  const { data: prof } = await supabase
+  const { data: prof, error: pErr } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", auth.user.id)
     .maybeSingle();
+  if (pErr || !prof?.is_platform_owner) redirect("/");
 
-  if (!prof?.is_platform_owner) redirect("/");
-
-  // guard: cannot demote the last owner
-  const { data: mrows } = await supabase
+  // Guard: cannot demote last owner
+  const { data: mrows, error: mErr } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
+  if (mErr) return;
 
-  const ownerIds =
-    (mrows ?? [])
-      .filter((m: any) => m.role === "owner")
-      .map((m: any) => String(m.user_id)) || [];
-
+  const ownerIds = (mrows ?? []).filter((m: any) => m.role === "owner").map((m: any) => String(m.user_id));
   const isTargetOwner = ownerIds.includes(user_id);
-  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    // Not allowed; just return. (You can surface a toast in a client layer later.)
-    return;
-  }
+  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) return;
 
   await supabase
     .from("tenant_memberships")
@@ -126,8 +135,7 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  // No redirect; SmartForm will reload
-  return;
+  return; // SmartForm reloads
 }
 
 /* -------------------- Page -------------------- */
@@ -145,7 +153,6 @@ export default async function OwnerDashboard() {
     .select("is_platform_owner, full_name")
     .eq("id", user.id)
     .maybeSingle();
-
   if (!profile?.is_platform_owner) redirect("/");
 
   // tenants
