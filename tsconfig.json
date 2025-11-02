@@ -10,8 +10,6 @@
     "incremental": true,
     "skipLibCheck": true,
     "plugins": [{ "name": "next" }],
-
-    // 👇 important bits for "@/..."
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
