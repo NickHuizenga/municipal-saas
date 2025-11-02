@@ -21,32 +21,6 @@ type UiTenant = {
   features: TenantFeatureFlags;
 };
 
-async function loadTenantsForUser(): Promise<{ tenants: UiTenant[]; debug?: string }> {
-  const supabase = getSupabaseServer();
-  const { data: auth } = await supabase.auth.getUser();
-  const user = auth?.user;
-  if (!user) redirect("/login");
-
-  // 1️⃣ memberships for this user
-  const { data: memberships, error: mErr } = await supabase
-    .from("tenant_memberships")
-    .select("tenant_id, role, tenants!inner(name, features)")
-    .eq("user_id", user.id);
-
-  if (mErr) return { tenants: [], debug: mErr.message };
-  if (!memberships || memberships.length === 0)
-    return { tenants: [], debug: "no membership rows" };
-
-  const tenants = memberships.map((m) => ({
-    id: m.tenant_id,
-    name: (m as any).tenants?.name || "Unnamed",
-    role: m.role,
-    features: ((m as any).tenants?.features ?? {}) as TenantFeatureFlags,
-  }));
-
-  return { tenants };
-}
-
 export default async function TenantSelectPage() {
   const { tenants, debug } = await loadTenantsForUser();
 
@@ -130,6 +104,47 @@ export default async function TenantSelectPage() {
       )}
     </main>
   );
+}
+
+async function loadTenantsForUser(): Promise<{ tenants: UiTenant[]; debug?: string }> {
+  try {
+    const supabase = getSupabaseServer();
+    const { data: auth } = await supabase.auth.getUser();
+    const user = auth?.user;
+    if (!user) redirect("/login");
+
+    // 1) Read this user's memberships (no joins)
+    const { data: memberships, error: mErr } = await supabase
+      .from("tenant_memberships")
+      .select("tenant_id, role")
+      .eq("user_id", user.id);
+
+    if (mErr) return { tenants: [], debug: `membership error: ${mErr.message}` };
+    if (!memberships?.length) return { tenants: [], debug: "no membership rows for this user" };
+
+    const tenantIds = [...new Set(memberships.map((m) => m.tenant_id))];
+
+    // 2) Fetch those tenants (id, name, features)
+    const { data: tenants, error: tErr } = await supabase
+      .from("tenants")
+      .select("id, name, features")
+      .in("id", tenantIds);
+
+    if (tErr) return { tenants: [], debug: `tenants error: ${tErr.message}` };
+
+    // 3) Merge role back in
+    const roleByTenant = new Map(memberships.map((m) => [m.tenant_id, m.role]));
+    const ui: UiTenant[] = (tenants ?? []).map((t) => ({
+      id: t.id as string,
+      name: (t.name as string) ?? "Unnamed",
+      role: (roleByTenant.get(t.id as string) as string) ?? "viewer",
+      features: ((t as any).features ?? {}) as TenantFeatureFlags,
+    }));
+
+    return { tenants: ui };
+  } catch (e: any) {
+    return { tenants: [], debug: String(e?.message ?? e) };
+  }
 }
 
 /** Simple label formatter for chips */
