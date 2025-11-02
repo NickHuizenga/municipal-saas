@@ -3,15 +3,28 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
-  // Who's calling?
+  // tie Supabase to Next cookies using the v0.4 "methods" shape
+  const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: () => cookies() }
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: CookieOptions) {
+          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
+        },
+      },
+    }
   );
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -27,26 +40,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // Payload
   const body = await req.json().catch(() => ({}));
   const email = (body.email ?? '').trim().toLowerCase();
   const tenantId: string | null = body.tenantId ?? null;
   const role: string = body.role ?? 'viewer';
   if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 });
 
-  // Admin (service role) client – server only
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Invite (if user exists, Supabase throws a friendly error; we continue)
   const { data: inviteRes, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email);
   if (inviteErr && !inviteErr.message.toLowerCase().includes('already registered')) {
     return NextResponse.json({ error: inviteErr.message }, { status: 400 });
   }
 
-  // Resolve user id whether new or existing
   let userId = inviteRes?.user?.id ?? null;
   if (!userId) {
     const { data: list, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -55,7 +64,6 @@ export async function POST(req: Request) {
   }
   if (!userId) return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
 
-  // Optional: attach to tenant with role
   if (tenantId) {
     const { error: memErr } = await admin
       .from('tenant_memberships')
