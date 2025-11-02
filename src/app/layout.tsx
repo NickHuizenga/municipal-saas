@@ -1,12 +1,19 @@
-import './globals.css';
+// src/app/layout.tsx
+import "./globals.css";
+import { ReactNode } from "react";
 
-export const metadata = { title: "Municipal SaaS", description: "Multi-tenant platform" };
+export const metadata = {
+  title: "Municipal SaaS",
+  description: "Multi-tenant municipal platform built with Next.js + Supabase",
+};
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// ✅ This wraps every page of your app
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen">{children}</body>
+      <body>
+        {children}
+      </body>
     </html>
   );
 }
-
