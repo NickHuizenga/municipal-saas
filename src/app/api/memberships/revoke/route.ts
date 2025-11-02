@@ -10,26 +10,32 @@ export async function POST(req: Request) {
   const { tenantId, userId } = await req.json().catch(() => ({}));
   if (!tenantId || !userId) return NextResponse.json({ error: 'tenantId and userId required' }, { status: 400 });
 
+  const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: () => cookies() }
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...(options || {}) });
+        },
+        remove(name: string, options: any) {
+          cookieStore.set({ name, value: '', ...(options || {}), maxAge: 0 });
+        },
+      } as any,
+    } as any
   );
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const { data: me } = await supabase
-    .from('profiles')
-    .select('is_platform_owner')
-    .eq('id', user.id)
-    .single();
+  const { data: me } = await supabase.from('profiles').select('is_platform_owner').eq('id', user.id).single();
   if (!me?.is_platform_owner) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   const { data: owners, error: ownersErr } = await admin
     .from('tenant_memberships')
