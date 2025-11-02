@@ -17,14 +17,6 @@ function isOwnerOrAdmin(role?: Role) {
   return role === "owner" || role === "admin";
 }
 
-/**
- * Header
- * - Card-like container (rounded-2xl, border, soft shadow)
- * - Pill-style nav links that match your card styling
- * - Permission-aware (platform owner sees all)
- * - Feature-flag-aware for tenant-scoped users
- * - Compact, with horizontal scroll on smaller screens
- */
 export default async function Header() {
   const supabase = getSupabaseServer();
   const {
@@ -65,19 +57,21 @@ export default async function Header() {
     features = ((data as any)?.tenants?.features ?? {}) as TenantFeatures;
   }
 
-  // Nav items — platform owner sees ALL modules regardless of flags
-  const items: { href: string; label: string; show: boolean }[] = [
+  // ---------- NAV GROUPS ----------
+  // View dropdown: always show Dashboard + Tenants.
+  // If platform owner, include Owner Dashboard.
+  const viewItems: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: "Dashboard", show: true },
     { href: "/tenant/select", label: "Tenants", show: true },
     { href: "/owner", label: "Owner Dashboard", show: isPlatformOwner },
+  ];
 
+  // Module dropdown: owner sees all; others only see enabled modules
+  const moduleItems: { href: string; label: string; show: boolean }[] = [
     { href: "/work-orders", label: "Work Orders", show: isPlatformOwner || !!features.work_orders },
     { href: "/sampling", label: "Sampling & Compliance", show: isPlatformOwner || !!features.sampling },
     { href: "/mft", label: "MFT Tracker", show: isPlatformOwner || !!features.mft },
     { href: "/grants", label: "Grants", show: isPlatformOwner || !!features.grants },
-
-    { href: "/settings/members", label: "Members", show: isPlatformOwner || isOwnerOrAdmin(role) },
-    { href: "/settings/invite", label: "Invite", show: isPlatformOwner || isOwnerOrAdmin(role) },
   ];
 
   // Identity chip content
@@ -92,7 +86,7 @@ export default async function Header() {
   return (
     <header className="sticky top-0 z-40 bg-transparent">
       <div className="mx-auto max-w-6xl px-4 pt-3">
-        {/* Card-like container */}
+        {/* Card-like container to match your tiles */}
         <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm">
           {/* Top row: identity */}
           <div className="flex items-center justify-between gap-3 px-4 pt-3">
@@ -115,25 +109,73 @@ export default async function Header() {
                 )}
               </div>
             </div>
-            {/* (Optional) Right-side space for future quick actions */}
             <div className="hidden sm:flex items-center gap-2" />
           </div>
 
-          {/* Nav row: pill links */}
-          <div className="mt-3 px-2 pb-3">
-            <nav className="flex items-center gap-2 overflow-x-auto py-1 px-1">
-              {items
-                .filter((i) => i.show)
-                .map((i) => (
-                  <Link
-                    key={i.href}
-                    href={i.href}
-                    className="inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition whitespace-nowrap"
-                  >
-                    {i.label}
-                  </Link>
-                ))}
-            </nav>
+          {/* Row: Dropdowns */}
+          <div className="mt-3 px-3 pb-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* VIEW DROPDOWN */}
+              <details className="group relative">
+                <summary
+                  className="list-none inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition cursor-pointer"
+                  aria-haspopup="menu"
+                >
+                  View
+                  <span className="ml-2 inline-block transition group-open:rotate-180">▾</span>
+                </summary>
+                <div
+                  className="absolute mt-2 w-56 rounded-2xl border bg-popover shadow-md overflow-hidden z-50"
+                  role="menu"
+                >
+                  <ul className="py-1 text-sm">
+                    {viewItems.filter(i => i.show).map(i => (
+                      <li key={i.href}>
+                        <Link
+                          href={i.href}
+                          className="block px-3 py-2 hover:bg-muted transition"
+                          role="menuitem"
+                        >
+                          {i.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+
+              {/* MODULE DROPDOWN */}
+              <details className="group relative">
+                <summary
+                  className="list-none inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition cursor-pointer"
+                  aria-haspopup="menu"
+                >
+                  Module
+                  <span className="ml-2 inline-block transition group-open:rotate-180">▾</span>
+                </summary>
+                <div
+                  className="absolute mt-2 w-72 rounded-2xl border bg-popover shadow-md overflow-hidden z-50"
+                  role="menu"
+                >
+                  <ul className="py-1 text-sm">
+                    {moduleItems.filter(i => i.show).map(i => (
+                      <li key={i.href}>
+                        <Link
+                          href={i.href}
+                          className="block px-3 py-2 hover:bg-muted transition"
+                          role="menuitem"
+                        >
+                          {i.label}
+                        </Link>
+                      </li>
+                    ))}
+                    {moduleItems.every(i => !i.show) && (
+                      <li className="px-3 py-2 text-muted-foreground">No modules available</li>
+                    )}
+                  </ul>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
 
@@ -141,10 +183,7 @@ export default async function Header() {
         {!tenantId && !isPlatformOwner && (
           <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-900">
             You don’t have a tenant active. Go to{" "}
-            <Link href="/tenant/select" className="underline">
-              Tenant Select
-            </Link>
-            .
+            <Link href="/tenant/select" className="underline">Tenant Select</Link>.
           </div>
         )}
       </div>
