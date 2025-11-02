@@ -1,6 +1,7 @@
 // src/app/owner/page.tsx
-import { redirect, revalidatePath } from "next/navigation";
+import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
+
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
