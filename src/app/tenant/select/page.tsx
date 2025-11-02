@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { createSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer } from '../../../lib/supabaseServer';
+
 
 type Row = { tenant_id: string; tenant_name: string; role: string };
 
