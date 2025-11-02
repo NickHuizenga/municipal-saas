@@ -3,8 +3,6 @@
 import { useMemo, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-type Mode = 'signin' | 'signup';
-
 export default function LoginPage() {
   const supabase = useMemo(
     () =>
@@ -15,7 +13,6 @@ export default function LoginPage() {
     []
   );
 
-  const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -26,28 +23,14 @@ export default function LoginPage() {
     e.preventDefault();
     setStatus('loading'); setMsg('');
     try {
-      if (mode === 'signin') {
-        const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
-        if (error) throw error;
-        setStatus('ok'); setMsg('Signed in.');
-        // Go somewhere useful (owner dashboard, etc.)
-        window.location.href = '/tenant'; // change if you want another landing
-      } else {
-        // SIGN UP
-        const { error } = await supabase.auth.signUp({
-          email,
-          password: pw,
-          options: {
-            emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/reset`
-          }
-        });
-        if (error) throw error;
-        setStatus('ok');
-        setMsg('Account created. If email confirmation is required, check your inbox.');
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
+      if (error) throw error;
+      setStatus('ok'); setMsg('Signed in.');
+      // send owners to tenant cards (change if you want a different landing)
+      window.location.href = '/tenant';
     } catch (err: any) {
       setStatus('error');
-      setMsg(err?.message ?? 'Something went wrong.');
+      setMsg(err?.message ?? 'Sign-in failed.');
     }
   }
 
@@ -69,14 +52,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="rounded-2xl border border-white/10 bg-zinc-900/60 shadow-xl backdrop-blur p-8">
           <div className="mb-6 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {mode === 'signin' ? 'Sign in' : 'Create account'}
-            </h1>
-            <p className="mt-1 text-sm text-zinc-400">
-              {mode === 'signin'
-                ? 'Use your email and password.'
-                : 'Enter your email and a new password.'}
-            </p>
+            <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
+            <p className="mt-1 text-sm text-zinc-400">Use your email and password.</p>
           </div>
 
           <form onSubmit={onSubmit} className="space-y-4">
@@ -100,9 +77,9 @@ export default function LoginPage() {
                   type={showPw ? 'text' : 'password'}
                   value={pw}
                   onChange={(e) => setPw(e.target.value)}
-                  placeholder={mode === 'signin' ? 'Your password' : 'Create a password'}
+                  placeholder="Your password"
                   className="w-full rounded-xl border border-white/10 bg-zinc-800/70 px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/30"
-                  autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                  autoComplete="current-password"
                   required
                 />
                 <button
@@ -121,22 +98,12 @@ export default function LoginPage() {
               disabled={status === 'loading'}
               className="w-full rounded-xl bg-white text-black font-medium py-3 hover:bg-zinc-100 disabled:opacity-60"
             >
-              {status === 'loading'
-                ? (mode === 'signin' ? 'Signing in…' : 'Creating…')
-                : (mode === 'signin' ? 'Sign in' : 'Create account')}
+              {status === 'loading' ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
 
-          {/* Actions */}
           <div className="mt-4 text-sm flex items-center justify-between">
-            <button
-              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-              className="text-zinc-300 hover:underline"
-              type="button"
-            >
-              {mode === 'signin' ? 'Create an account' : 'Have an account? Sign in'}
-            </button>
-
+            <span className="text-zinc-400">No self-signups.</span>
             <button
               onClick={onForgotPassword}
               className="text-zinc-300 hover:underline"
@@ -148,7 +115,6 @@ export default function LoginPage() {
             </button>
           </div>
 
-          {/* Status */}
           {msg ? (
             <div
               className={`mt-4 text-sm ${
