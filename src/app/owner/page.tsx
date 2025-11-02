@@ -48,7 +48,7 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* -------------------- Server Actions (one-arg signatures) -------------------- */
+/* -------------------- Server Actions (one-arg; SmartForm handles reload) -------------------- */
 
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
@@ -77,8 +77,8 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
 
   await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
 
-  // Next 14: refresh by redirecting back
-  redirect("/owner");
+  // No redirect here; SmartForm will flash + reload on the client
+  return;
 }
 
 async function doUpdateRole(formData: FormData): Promise<void> {
@@ -116,8 +116,8 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    // silently ignore invalid demotion; you can surface a toast later with a client wrapper
-    redirect("/owner");
+    // Not allowed; just return. (You can surface a toast in a client layer later.)
+    return;
   }
 
   await supabase
@@ -126,8 +126,8 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  // Next 14: refresh by redirecting back
-  redirect("/owner");
+  // No redirect; SmartForm will reload
+  return;
 }
 
 /* -------------------- Page -------------------- */
@@ -165,10 +165,12 @@ export default async function OwnerDashboard() {
   const tenantIds = tenants.map((t) => t.id);
 
   // memberships for those tenants
-  const { data: mrows } = await supabase
-    .from("tenant_memberships")
-    .select("tenant_id, user_id, role")
-    .in("tenant_id", tenantIds);
+  const { data: mrows } = tenantIds.length
+    ? await supabase
+        .from("tenant_memberships")
+        .select("tenant_id, user_id, role")
+        .in("tenant_id", tenantIds)
+    : { data: [] as any[] };
 
   // names from profiles (best effort)
   const userIds = Array.from(new Set((mrows ?? []).map((m) => String(m.user_id))));
@@ -255,7 +257,7 @@ export default async function OwnerDashboard() {
 
                   <div className="mt-3 space-y-4">
                     {/* Module toggles */}
-                    <form action={doUpdateFeatures} className="rounded-xl border border-[rgb(var(--border))] p-3">
+                    <SmartForm action={doUpdateFeatures} className="rounded-xl border border-[rgb(var(--border))] p-3">
                       <input type="hidden" name="tenant_id" value={t.id} />
                       <div className="text-sm font-medium mb-2">Modules</div>
                       <div className="flex flex-wrap gap-3 text-sm">
@@ -267,7 +269,9 @@ export default async function OwnerDashboard() {
                               defaultChecked={!!t.features?.[k]}
                               className="accent-[rgb(var(--accent))]"
                             />
-                            <span className="text-[rgb(var(--muted-foreground))]">{formatModuleName(String(k))}</span>
+                            <span className="text-[rgb(var(--muted-foreground))]">
+                              {formatModuleName(String(k))}
+                            </span>
                           </label>
                         ))}
                       </div>
@@ -277,7 +281,7 @@ export default async function OwnerDashboard() {
                       >
                         Save Modules
                       </button>
-                    </form>
+                    </SmartForm>
 
                     {/* Members & roles */}
                     <div className="rounded-xl border border-[rgb(var(--border))] p-3">
@@ -293,7 +297,7 @@ export default async function OwnerDashboard() {
                                   {m.full_name || m.user_id}
                                 </div>
                               </div>
-                              <form action={doUpdateRole} className="flex items-center gap-2">
+                              <SmartForm action={doUpdateRole} className="flex items-center gap-2">
                                 <input type="hidden" name="tenant_id" value={t.id} />
                                 <input type="hidden" name="user_id" value={m.user_id} />
                                 <select
@@ -314,7 +318,7 @@ export default async function OwnerDashboard() {
                                 >
                                   Save
                                 </button>
-                              </form>
+                              </SmartForm>
                             </li>
                           ))}
                         </ul>
