@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { createSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer } from '../../../lib/supabaseServer';
+
 
 type Flags = { work_orders?: boolean; sampling?: boolean; mft?: boolean; grants?: boolean };
 
