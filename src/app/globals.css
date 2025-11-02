@@ -2,12 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Optional: your own global styles can go below */
-html, body {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  font-family: system-ui, sans-serif;
-  background-color: #111; /* Dark mode base */
-  color: #f9fafb;
+/* ================================
+   Global Theme Overrides
+   ================================ */
+@layer base {
+  :root {
+    /* ---------- LIGHT MODE ---------- */
+    --background: 245 245 245;            /* near-white background */
+    --foreground: 18 18 18;               /* dark text */
+    --muted: 230 230 230;
+    --muted-foreground: 85 85 90;
+    --border: 220 220 225;
+    --card: 255 255 255;
+    --card-foreground: 18 18 18;
+    --popover: 255 255 255;
+    --popover-foreground: 18 18 18;
+    --accent: 30 80 150;                  /* bluish accent */
+    --accent-foreground: 245 247 250;
+  }
+
+  .dark {
+    /* ---------- DARK MODE ---------- */
+    --background: 24 26 28;               /* #181A1C soft dark gray */
+    --foreground: 225 230 240;            /* light text */
+    --muted: 42 46 52;                    /* #2A2E34 for muted surfaces */
+    --muted-foreground: 165 175 190;      /* cool grayish-blue text */
+    --border: 64 70 78;                   /* #40464E thin gray-blue borders */
+    --card: 30 32 35;                     /* #1E2023 card background */
+    --card-foreground: 230 235 245;       /* text inside cards */
+    --popover: 32 34 37;                  /* popovers/dropdowns */
+    --popover-foreground: 230 235 245;
+    --accent: 70 100 140;                 /* bluish-gray accent */
+    --accent-foreground: 240 243 247;
+  }
+
+  /* Apply the chosen palette to Tailwind token layers */
+  body {
+    @apply bg-[rgb(var(--background))] text-[rgb(var(--foreground))] antialiased;
+  }
+
+  /* ---------- Global Element Tweaks ---------- */
+
+  a {
+    @apply text-[rgb(var(--accent))] hover:text-[rgb(var(--accent-foreground))] transition;
+  }
+
+  button {
+    @apply bg-transparent text-[rgb(var(--foreground))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--muted))] hover:text-[rgb(var(--accent-foreground))] transition;
+  }
+
+  input, textarea, select {
+    @apply bg-[rgb(var(--card))] border border-[rgb(var(--border))] text-[rgb(var(--foreground))] rounded-md px-3 py-2;
+  }
+
+  /* Rounded, soft cards with bluish glow */
+  .card {
+    @apply rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] shadow-[0_0_10px_rgba(70,100,140,0.1)] hover:shadow-[0_0_15px_rgba(70,100,140,0.2)] transition;
+  }
+
+  /* Section headings and muted text */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight text-[rgb(var(--foreground))];
+  }
+
+  p, span, li, small {
+    @apply text-[rgb(var(--muted-foreground))];
+  }
+
+  /* Borders for layout separators */
+  hr {
+    @apply border-[rgb(var(--border))];
+  }
 }
