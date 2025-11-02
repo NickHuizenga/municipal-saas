@@ -2,7 +2,6 @@
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -29,103 +28,9 @@ type UiMember = {
   user_id: string;
   role: Role;
   full_name?: string | null;
-  email?: string | null;
 };
 
-/* ---------- Server Actions ---------- */
-
-async function doUpdateFeatures(_prev: any, formData: FormData) {
-  "use server";
-  const supabase = getSupabaseServer();
-
-  const tenant_id = String(formData.get("tenant_id") ?? "");
-  if (!tenant_id) return { ok: false, error: "Missing tenant_id" };
-
-  // Boolean flags from the form (checkbox present => "on")
-  const flags: TenantFeatureFlags = {
-    work_orders: formData.get("work_orders") === "on",
-    sampling: formData.get("sampling") === "on",
-    mft: formData.get("mft") === "on",
-    grants: formData.get("grants") === "on",
-  };
-
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) return redirect("/login");
-
-  // Confirm platform owner (keeps RLS + UI consistent)
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("is_platform_owner")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-
-  if (!prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
-
-  const { error } = await supabase
-    .from("tenants")
-    .update({ features: flags })
-    .eq("id", tenant_id);
-
-  if (error) return { ok: false, error: error.message };
-
-// 👇 add this
-if (typeof window !== "undefined") window.location.reload();
-
-return { ok: true };
-
-}
-
-async function doUpdateRole(_prev: any, formData: FormData) {
-  "use server";
-  const supabase = getSupabaseServer();
-
-  const tenant_id = String(formData.get("tenant_id") ?? "");
-  const user_id = String(formData.get("user_id") ?? "");
-  const role = String(formData.get("role") ?? "") as Role;
-
-  if (!tenant_id || !user_id || !role) return { ok: false, error: "Missing fields." };
-  if (!ROLES.includes(role)) return { ok: false, error: "Invalid role." };
-
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) return redirect("/login");
-
-  // Must be platform owner to mutate
-  const { data: prof } = await supabase
-    .from("profiles")
-    .select("is_platform_owner")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-
-  if (!prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
-
-  // Guard: cannot demote the last owner for a tenant
-  const { data: owners, error: ownersErr } = await supabase
-    .from("tenant_memberships")
-    .select("user_id, role")
-    .eq("tenant_id", tenant_id);
-
-  if (ownersErr) return { ok: false, error: ownersErr.message };
-
-  const ownerIds = (owners ?? []).filter((m) => m.role === "owner").map((m) => String(m.user_id));
-  const isTargetOwner = ownerIds.includes(user_id);
-
-  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    return { ok: false, error: "You can’t demote the last owner of a tenant." };
-  }
-
-  const { error } = await supabase
-    .from("tenant_memberships")
-    .update({ role })
-    .eq("tenant_id", tenant_id)
-    .eq("user_id", user_id);
-
-  if (error) return { ok: false, error: error.message };
-
-  revalidatePath("/owner");
-  return { ok: true };
-}
-
-/* ---------- Page ---------- */
+/* -------------------- Helpers -------------------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -142,10 +47,103 @@ function formatModuleName(key: string): string {
   }
 }
 
+/* -------------------- Server Actions -------------------- */
+
+export async function doUpdateFeatures(_prev: any, formData: FormData) {
+  "use server";
+  const supabase = getSupabaseServer();
+
+  const tenant_id = String(formData.get("tenant_id") ?? "");
+  if (!tenant_id) return { ok: false, error: "Missing tenant_id" };
+
+  const flags: TenantFeatureFlags = {
+    work_orders: formData.get("work_orders") === "on",
+    sampling: formData.get("sampling") === "on",
+    mft: formData.get("mft") === "on",
+    grants: formData.get("grants") === "on",
+  };
+
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) redirect("/login");
+
+  // must be platform owner
+  const { data: prof, error: pErr } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  if (pErr || !prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+
+  const { error } = await supabase
+    .from("tenants")
+    .update({ features: flags })
+    .eq("id", tenant_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  // Next 14: redirect to refresh the page
+  redirect("/owner");
+}
+
+export async function doUpdateRole(_prev: any, formData: FormData) {
+  "use server";
+  const supabase = getSupabaseServer();
+
+  const tenant_id = String(formData.get("tenant_id") ?? "");
+  const user_id = String(formData.get("user_id") ?? "");
+  const role = String(formData.get("role") ?? "") as Role;
+
+  if (!tenant_id || !user_id || !role) return { ok: false, error: "Missing fields." };
+  if (!ROLES.includes(role)) return { ok: false, error: "Invalid role." };
+
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) redirect("/login");
+
+  // must be platform owner
+  const { data: prof, error: pErr } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  if (pErr || !prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+
+  // guard: cannot demote the last owner
+  const { data: mrows, error: mErr } = await supabase
+    .from("tenant_memberships")
+    .select("user_id, role")
+    .eq("tenant_id", tenant_id);
+
+  if (mErr) return { ok: false, error: mErr.message };
+
+  const ownerIds = (mrows ?? [])
+    .filter((m: any) => m.role === "owner")
+    .map((m: any) => String(m.user_id));
+
+  const isTargetOwner = ownerIds.includes(user_id);
+  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
+    return { ok: false, error: "You can’t demote the last owner of a tenant." };
+  }
+
+  const { error } = await supabase
+    .from("tenant_memberships")
+    .update({ role })
+    .eq("tenant_id", tenant_id)
+    .eq("user_id", user_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  // Next 14 refresh
+  redirect("/owner");
+}
+
+/* -------------------- Page -------------------- */
+
 export default async function OwnerDashboard() {
   const supabase = getSupabaseServer();
 
-  // Auth + platform owner check
+  // auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -158,42 +156,48 @@ export default async function OwnerDashboard() {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  // -------- load tenants
+  // tenants
   const { data: trows, error: terr } = await supabase
     .from("tenants")
     .select("id, name, features")
     .order("name", { ascending: true });
+
+  if (terr) {
+    return (
+      <main className="mx-auto max-w-6xl p-6">
+        <div className="rounded-2xl border p-6">
+          <div className="text-sm text-[rgb(var(--muted-foreground))]">
+            Error loading tenants: {terr.message}
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const tenants: UiTenant[] =
     (trows ?? []).map((t: any) => ({
       id: String(t.id),
       name: String(t.name ?? "Unnamed"),
       features: (t.features ?? {}) as TenantFeatureFlags,
-      memberCount: 0, // fill below
+      memberCount: 0,
     })) || [];
 
   const tenantIds = tenants.map((t) => t.id);
 
-  // -------- memberships for those tenants
+  // memberships for those tenants
   const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("tenant_id, user_id, role")
     .in("tenant_id", tenantIds);
 
-  // -------- gather unique user ids & fetch profiles
+  // gather user names from profiles (best effort)
   const userIds = Array.from(new Set((mrows ?? []).map((m) => String(m.user_id))));
   const { data: prow } = userIds.length
     ? await supabase.from("profiles").select("id, full_name").in("id", userIds)
     : { data: [] as any[] };
 
-  const { data: urow } = userIds.length
-    ? await supabase.from("auth.users").select("id, email").in("id", userIds)
-    : { data: [] as any[] };
-
   const nameById = new Map<string, string | null>((prow ?? []).map((p: any) => [String(p.id), p.full_name ?? null]));
-  const emailById = new Map<string, string | null>((urow ?? []).map((u: any) => [String(u.id), u.email ?? null]));
 
-  // group members by tenant
   const membersByTenant = new Map<string, UiMember[]>();
   (mrows ?? []).forEach((m: any) => {
     const tid = String(m.tenant_id);
@@ -203,7 +207,6 @@ export default async function OwnerDashboard() {
       user_id: String(m.user_id),
       role: m.role as Role,
       full_name: nameById.get(String(m.user_id)) ?? null,
-      email: emailById.get(String(m.user_id)) ?? null,
     });
     membersByTenant.set(tid, arr);
   });
@@ -243,9 +246,7 @@ export default async function OwnerDashboard() {
                     <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
                       {t.name}
                     </div>
-                    <div className="text-xs text-[rgb(var(--muted-foreground))]">
-                      {t.id}
-                    </div>
+                    <div className="text-xs text-[rgb(var(--muted-foreground))]">{t.id}</div>
                   </div>
                   <div className="text-xs rounded-full border border-[rgb(var(--border))] px-2 py-0.5 text-[rgb(var(--muted-foreground))]">
                     {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
@@ -316,11 +317,8 @@ export default async function OwnerDashboard() {
                             <li key={m.user_id} className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="text-sm text-[rgb(var(--card-foreground))] truncate">
-                                  {m.full_name || m.email || m.user_id}
+                                  {m.full_name || m.user_id}
                                 </div>
-                                {m.email && (
-                                  <div className="text-xs text-[rgb(var(--muted-foreground))] truncate">{m.email}</div>
-                                )}
                               </div>
                               <form action={doUpdateRole} className="flex items-center gap-2">
                                 <input type="hidden" name="tenant_id" value={t.id} />
