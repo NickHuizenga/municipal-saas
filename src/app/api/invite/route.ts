@@ -6,11 +6,11 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
-// Lightweight shape for what we need from Admin API
+// minimal shape we need from the Admin API
 type BasicUser = { id: string; email?: string | null };
 
 export async function POST(req: Request) {
-  // Works with both old/new @supabase/ssr cookie shapes
+  // Cookie adapter that works across @supabase/ssr versions
   const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,16 +20,19 @@ export async function POST(req: Request) {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options?: any) {
           cookieStore.set({ name, value, ...(options || {}) });
+          return; // ensure void
         },
-        remove(name: string, options: any) {
+        remove(name: string, options?: any) {
           cookieStore.set({ name, value: '', ...(options || {}), maxAge: 0 });
+          return; // ensure void
         },
       } as any,
     } as any
   );
 
+  // caller must be logged in and be platform owner
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -38,34 +41,38 @@ export async function POST(req: Request) {
     .select('is_platform_owner')
     .eq('id', user.id)
     .single();
-  if (!profile?.is_platform_owner) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!profile?.is_platform_owner) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
+  // payload
   const body = await req.json().catch(() => ({}));
   const email = (body.email ?? '').trim().toLowerCase();
   const tenantId: string | null = body.tenantId ?? null;
   const role: string = body.role ?? 'viewer';
   if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 });
 
+  // admin (service role) client
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Try to invite. If already registered, we'll just look them up.
+  // try inviting
   const { data: inviteRes, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email);
   if (inviteErr && !inviteErr.message.toLowerCase().includes('already registered')) {
     return NextResponse.json({ error: inviteErr.message }, { status: 400 });
   }
 
-  // Resolve userId either from invite or by listing users
+  // resolve user id either from invite or by listing users
   let userId: string | null = inviteRes?.user?.id ?? null;
 
   if (!userId) {
     const { data: list, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 400 });
 
-    const users = (list?.users ?? []) as BasicUser[]; // 👈 tell TS what this is
-    const match = users.find((u) => (u.email ?? '').toLowerCase() === email);
+    const users = (list?.users ?? []) as BasicUser[];
+    const match = users.find(u => (u.email ?? '').toLowerCase() === email);
     userId = match?.id ?? null;
   }
 
@@ -73,7 +80,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
   }
 
-  // Optionally attach to tenant with role
+  // optionally attach to tenant with role
   if (tenantId) {
     const { error: memErr } = await admin
       .from('tenant_memberships')
