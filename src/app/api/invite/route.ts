@@ -3,28 +3,14 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
-  // tie Supabase to Next cookies using the v0.4 "methods" shape
-  const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
-        },
-      },
-    }
+    { cookies: () => cookies() }
   );
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -35,10 +21,7 @@ export async function POST(req: Request) {
     .select('is_platform_owner')
     .eq('id', user.id)
     .single();
-
-  if (!profile?.is_platform_owner) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  if (!profile?.is_platform_owner) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
   const email = (body.email ?? '').trim().toLowerCase();
