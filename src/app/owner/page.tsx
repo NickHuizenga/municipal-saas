@@ -1,9 +1,12 @@
 // src/app/owner/page.tsx
-import { redirect } from "next/navigation";
+import { redirect, revalidatePath } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
+const ROLES: Role[] = ["owner", "admin", "dispatcher", "crew_leader", "crew", "viewer"];
 
 type TenantFeatureFlags = {
   work_orders?: boolean;
@@ -19,6 +22,106 @@ type UiTenant = {
   features: TenantFeatureFlags;
   memberCount: number;
 };
+
+type UiMember = {
+  tenant_id: string;
+  user_id: string;
+  role: Role;
+  full_name?: string | null;
+  email?: string | null;
+};
+
+/* ---------- Server Actions ---------- */
+
+async function doUpdateFeatures(_prev: any, formData: FormData) {
+  "use server";
+  const supabase = getSupabaseServer();
+
+  const tenant_id = String(formData.get("tenant_id") ?? "");
+  if (!tenant_id) return { ok: false, error: "Missing tenant_id" };
+
+  // Boolean flags from the form (checkbox present => "on")
+  const flags: TenantFeatureFlags = {
+    work_orders: formData.get("work_orders") === "on",
+    sampling: formData.get("sampling") === "on",
+    mft: formData.get("mft") === "on",
+    grants: formData.get("grants") === "on",
+  };
+
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) return redirect("/login");
+
+  // Confirm platform owner (keeps RLS + UI consistent)
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  if (!prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+
+  const { error } = await supabase
+    .from("tenants")
+    .update({ features: flags })
+    .eq("id", tenant_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/owner");
+  return { ok: true };
+}
+
+async function doUpdateRole(_prev: any, formData: FormData) {
+  "use server";
+  const supabase = getSupabaseServer();
+
+  const tenant_id = String(formData.get("tenant_id") ?? "");
+  const user_id = String(formData.get("user_id") ?? "");
+  const role = String(formData.get("role") ?? "") as Role;
+
+  if (!tenant_id || !user_id || !role) return { ok: false, error: "Missing fields." };
+  if (!ROLES.includes(role)) return { ok: false, error: "Invalid role." };
+
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth?.user) return redirect("/login");
+
+  // Must be platform owner to mutate
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  if (!prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+
+  // Guard: cannot demote the last owner for a tenant
+  const { data: owners, error: ownersErr } = await supabase
+    .from("tenant_memberships")
+    .select("user_id, role")
+    .eq("tenant_id", tenant_id);
+
+  if (ownersErr) return { ok: false, error: ownersErr.message };
+
+  const ownerIds = (owners ?? []).filter((m) => m.role === "owner").map((m) => String(m.user_id));
+  const isTargetOwner = ownerIds.includes(user_id);
+
+  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
+    return { ok: false, error: "You can’t demote the last owner of a tenant." };
+  }
+
+  const { error } = await supabase
+    .from("tenant_memberships")
+    .update({ role })
+    .eq("tenant_id", tenant_id)
+    .eq("user_id", user_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/owner");
+  return { ok: true };
+}
+
+/* ---------- Page ---------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -38,7 +141,7 @@ function formatModuleName(key: string): string {
 export default async function OwnerDashboard() {
   const supabase = getSupabaseServer();
 
-  // --- 1) Verify user + platform owner ---
+  // Auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -49,41 +152,62 @@ export default async function OwnerDashboard() {
     .eq("id", user.id)
     .maybeSingle();
 
-  const isOwner = !!profile?.is_platform_owner;
-  if (!isOwner) redirect("/");
+  if (!profile?.is_platform_owner) redirect("/");
 
-  // --- 2) Load tenants and memberships (defensive) ---
-  let tenants: UiTenant[] = [];
-  const debug: string[] = [];
-
+  // -------- load tenants
   const { data: trows, error: terr } = await supabase
     .from("tenants")
     .select("id, name, features")
     .order("name", { ascending: true });
 
-  if (terr) debug.push(`tenants error: ${terr.message}`);
-
-  // Fetch all memberships (owner is allowed by RLS)
-  const { data: mrows, error: merr } = await supabase
-    .from("tenant_memberships")
-    .select("tenant_id, user_id");
-
-  if (merr) debug.push(`memberships error: ${merr.message}`);
-
-  // Build counts per tenant_id
-  const countByTenant = new Map<string, number>();
-  (mrows ?? []).forEach((m: any) => {
-    const id = String(m.tenant_id);
-    countByTenant.set(id, (countByTenant.get(id) ?? 0) + 1);
-  });
-
-  tenants =
+  const tenants: UiTenant[] =
     (trows ?? []).map((t: any) => ({
       id: String(t.id),
       name: String(t.name ?? "Unnamed"),
       features: (t.features ?? {}) as TenantFeatureFlags,
-      memberCount: countByTenant.get(String(t.id)) ?? 0,
+      memberCount: 0, // fill below
     })) || [];
+
+  const tenantIds = tenants.map((t) => t.id);
+
+  // -------- memberships for those tenants
+  const { data: mrows } = await supabase
+    .from("tenant_memberships")
+    .select("tenant_id, user_id, role")
+    .in("tenant_id", tenantIds);
+
+  // -------- gather unique user ids & fetch profiles
+  const userIds = Array.from(new Set((mrows ?? []).map((m) => String(m.user_id))));
+  const { data: prow } = userIds.length
+    ? await supabase.from("profiles").select("id, full_name").in("id", userIds)
+    : { data: [] as any[] };
+
+  const { data: urow } = userIds.length
+    ? await supabase.from("auth.users").select("id, email").in("id", userIds)
+    : { data: [] as any[] };
+
+  const nameById = new Map<string, string | null>((prow ?? []).map((p: any) => [String(p.id), p.full_name ?? null]));
+  const emailById = new Map<string, string | null>((urow ?? []).map((u: any) => [String(u.id), u.email ?? null]));
+
+  // group members by tenant
+  const membersByTenant = new Map<string, UiMember[]>();
+  (mrows ?? []).forEach((m: any) => {
+    const tid = String(m.tenant_id);
+    const arr = membersByTenant.get(tid) ?? [];
+    arr.push({
+      tenant_id: tid,
+      user_id: String(m.user_id),
+      role: m.role as Role,
+      full_name: nameById.get(String(m.user_id)) ?? null,
+      email: emailById.get(String(m.user_id)) ?? null,
+    });
+    membersByTenant.set(tid, arr);
+  });
+
+  // fill member counts
+  tenants.forEach((t) => {
+    t.memberCount = membersByTenant.get(t.id)?.length ?? 0;
+  });
 
   return (
     <main className="mx-auto max-w-6xl p-6">
@@ -92,30 +216,24 @@ export default async function OwnerDashboard() {
           Platform Owner Dashboard
         </h1>
         <p className="text-sm text-[rgb(var(--muted-foreground))]">
-          See all tenants, enabled modules, and member counts.
+          See all tenants, enabled modules, and manage members & roles.
         </p>
       </div>
 
       {tenants.length === 0 ? (
-        <div className="rounded-2xl border p-6">
-          <p>No tenants found.</p>
-          {debug.length > 0 && (
-            <pre className="mt-3 text-xs text-[rgb(var(--muted-foreground))] whitespace-pre-wrap">
-              Debug:
-              {"\n"}
-              {debug.join("\n")}
-            </pre>
-          )}
-        </div>
+        <div className="rounded-2xl border p-6">No tenants found.</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {tenants.map((t) => {
+            const members = membersByTenant.get(t.id) ?? [];
             const enabled = Object.entries(t.features).filter(([_, v]) => v);
+
             return (
               <div
                 key={t.id}
                 className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
               >
+                {/* Header row */}
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
@@ -130,7 +248,7 @@ export default async function OwnerDashboard() {
                   </div>
                 </div>
 
-                {/* Module chips */}
+                {/* Current module chips */}
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {enabled.length > 0 ? (
                     enabled.map(([key]) => (
@@ -147,6 +265,88 @@ export default async function OwnerDashboard() {
                     </span>
                   )}
                 </div>
+
+                {/* Manage details */}
+                <details className="group mt-4">
+                  <summary className="list-none cursor-pointer inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]">
+                    Manage
+                    <span className="ml-2 transition group-open:rotate-180">▾</span>
+                  </summary>
+
+                  <div className="mt-3 space-y-4">
+                    {/* Module toggles */}
+                    <form action={doUpdateFeatures} className="rounded-xl border border-[rgb(var(--border))] p-3">
+                      <input type="hidden" name="tenant_id" value={t.id} />
+                      <div className="text-sm font-medium mb-2">Modules</div>
+                      <div className="flex flex-wrap gap-3 text-sm">
+                        {(["work_orders", "sampling", "mft", "grants"] as (keyof TenantFeatureFlags)[]).map((k) => (
+                          <label key={String(k)} className="inline-flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              name={String(k)}
+                              defaultChecked={!!t.features?.[k]}
+                              className="accent-[rgb(var(--accent))]"
+                            />
+                            <span className="text-[rgb(var(--muted-foreground))]">
+                              {formatModuleName(String(k))}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <button
+                        type="submit"
+                        className="mt-3 inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
+                      >
+                        Save Modules
+                      </button>
+                    </form>
+
+                    {/* Members & roles */}
+                    <div className="rounded-xl border border-[rgb(var(--border))] p-3">
+                      <div className="text-sm font-medium mb-2">Members</div>
+                      {members.length === 0 ? (
+                        <div className="text-xs text-[rgb(var(--muted-foreground))]">No members yet.</div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {members.map((m) => (
+                            <li key={m.user_id} className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm text-[rgb(var(--card-foreground))] truncate">
+                                  {m.full_name || m.email || m.user_id}
+                                </div>
+                                {m.email && (
+                                  <div className="text-xs text-[rgb(var(--muted-foreground))] truncate">{m.email}</div>
+                                )}
+                              </div>
+                              <form action={doUpdateRole} className="flex items-center gap-2">
+                                <input type="hidden" name="tenant_id" value={t.id} />
+                                <input type="hidden" name="user_id" value={m.user_id} />
+                                <select
+                                  name="role"
+                                  defaultValue={m.role}
+                                  className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-2 py-1 text-sm"
+                                >
+                                  {ROLES.map((r) => (
+                                    <option key={r} value={r}>
+                                      {r}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="submit"
+                                  className="rounded-md border border-[rgb(var(--border))] px-2 py-1 text-sm hover:bg-[rgb(var(--muted))]"
+                                  title="Save role"
+                                >
+                                  Save
+                                </button>
+                              </form>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </details>
               </div>
             );
           })}
