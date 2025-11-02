@@ -68,8 +68,11 @@ async function doUpdateFeatures(_prev: any, formData: FormData) {
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/owner");
-  return { ok: true };
+// 👇 add this
+if (typeof window !== "undefined") window.location.reload();
+
+return { ok: true };
+
 }
 
 async function doUpdateRole(_prev: any, formData: FormData) {
