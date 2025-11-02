@@ -47,14 +47,14 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* -------------------- Server Actions (file-local, not exported) -------------------- */
+/* -------------------- Server Actions (one-arg signatures) -------------------- */
 
-async function doUpdateFeatures(_prev: any, formData: FormData) {
+async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
-  if (!tenant_id) return { ok: false, error: "Missing tenant_id" };
+  if (!tenant_id) return;
 
   const flags: TenantFeatureFlags = {
     work_orders: formData.get("work_orders") === "on",
@@ -66,23 +66,21 @@ async function doUpdateFeatures(_prev: any, formData: FormData) {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) redirect("/login");
 
-  // must be platform owner
-  const { data: prof, error: pErr } = await supabase
+  const { data: prof } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", auth.user.id)
     .maybeSingle();
 
-  if (pErr || !prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+  if (!prof?.is_platform_owner) redirect("/");
 
-  const { error } = await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
-  if (error) return { ok: false, error: error.message };
+  await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
 
-  // Next 14 refresh
+  // Next 14: refresh by redirecting back
   redirect("/owner");
 }
 
-async function doUpdateRole(_prev: any, formData: FormData) {
+async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
 
@@ -90,47 +88,44 @@ async function doUpdateRole(_prev: any, formData: FormData) {
   const user_id = String(formData.get("user_id") ?? "");
   const role = String(formData.get("role") ?? "") as Role;
 
-  if (!tenant_id || !user_id || !role) return { ok: false, error: "Missing fields." };
-  if (!ROLES.includes(role)) return { ok: false, error: "Invalid role." };
+  if (!tenant_id || !user_id || !role) return;
+  if (!ROLES.includes(role)) return;
 
   const { data: auth } = await supabase.auth.getUser();
   if (!auth?.user) redirect("/login");
 
-  // must be platform owner
-  const { data: prof, error: pErr } = await supabase
+  const { data: prof } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", auth.user.id)
     .maybeSingle();
 
-  if (pErr || !prof?.is_platform_owner) return { ok: false, error: "Not a platform owner." };
+  if (!prof?.is_platform_owner) redirect("/");
 
   // guard: cannot demote the last owner
-  const { data: mrows, error: mErr } = await supabase
+  const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
 
-  if (mErr) return { ok: false, error: mErr.message };
-
-  const ownerIds = (mrows ?? [])
-    .filter((m: any) => m.role === "owner")
-    .map((m: any) => String(m.user_id));
+  const ownerIds =
+    (mrows ?? [])
+      .filter((m: any) => m.role === "owner")
+      .map((m: any) => String(m.user_id)) || [];
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    return { ok: false, error: "You can’t demote the last owner of a tenant." };
+    // silently ignore invalid demotion; you can surface a toast later with a client wrapper
+    redirect("/owner");
   }
 
-  const { error } = await supabase
+  await supabase
     .from("tenant_memberships")
     .update({ role })
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  if (error) return { ok: false, error: error.message };
-
-  // Next 14 refresh
+  // Next 14: refresh by redirecting back
   redirect("/owner");
 }
 
@@ -153,22 +148,10 @@ export default async function OwnerDashboard() {
   if (!profile?.is_platform_owner) redirect("/");
 
   // tenants
-  const { data: trows, error: terr } = await supabase
+  const { data: trows } = await supabase
     .from("tenants")
     .select("id, name, features")
     .order("name", { ascending: true });
-
-  if (terr) {
-    return (
-      <main className="mx-auto max-w-6xl p-6">
-        <div className="rounded-2xl border p-6">
-          <div className="text-sm text-[rgb(var(--muted-foreground))]">
-            Error loading tenants: {terr.message}
-          </div>
-        </div>
-      </main>
-    );
-  }
 
   const tenants: UiTenant[] =
     (trows ?? []).map((t: any) => ({
