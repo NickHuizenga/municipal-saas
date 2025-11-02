@@ -1,4 +1,5 @@
 // src/app/owner/page.tsx
+import SmartForm from "@/components/SmartForm";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
