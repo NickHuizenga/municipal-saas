@@ -1,13 +1,19 @@
-import Link from "next/link";
-
-export default function Home() {
+// src/app/page.tsx
+export default function HomePage() {
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-semibold mb-4">Welcome</h1>
-      <p className="text-neutral-400 mb-6">Start by choosing a tenant.</p>
-      <Link href="/tenant/select" className="rounded-2xl bg-white/10 hover:bg-white/15 px-4 py-2">
-        Go to Tenant Select
-      </Link>
+    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-100">
+      <div className="max-w-lg p-8 text-center border border-gray-700 rounded-2xl shadow-md bg-gray-800">
+        <h1 className="text-3xl font-bold mb-4">Municipal SaaS Platform</h1>
+        <p className="mb-6 text-gray-400">
+          Multi-tenant management platform powered by Next.js and Supabase.
+        </p>
+        <a
+          href="/login"
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg text-white transition"
+        >
+          Go to Login
+        </a>
+      </div>
     </main>
   );
 }
