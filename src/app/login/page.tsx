@@ -1,130 +1,115 @@
-'use client';
+// src/app/login/page.tsx
+import { redirect } from "next/navigation";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
-import { useMemo, useState } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-export default function LoginPage() {
-  const supabase = useMemo(
-    () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
-      ),
-    []
-  );
+type LoginState = {
+  error?: string | null;
+};
 
-  const [email, setEmail] = useState('');
-  const [pw, setPw] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [status, setStatus] = useState<'idle'|'loading'|'ok'|'error'>('idle');
-  const [msg, setMsg] = useState<string>('');
+async function doLogin(_: LoginState, formData: FormData): Promise<LoginState> {
+  "use server";
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setStatus('loading'); setMsg('');
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
-      if (error) throw error;
-      setStatus('ok'); setMsg('Signed in.');
-      // send owners to tenant cards (change if you want a different landing)
-      window.location.href = '/tenant';
-    } catch (err: any) {
-      setStatus('error');
-      setMsg(err?.message ?? 'Sign-in failed.');
-    }
+  const email = String(formData.get("email") || "").trim();
+  const password = String(formData.get("password") || "");
+
+  if (!email || !password) {
+    return { error: "Email and password are required." };
   }
 
-  async function onForgotPassword() {
-    setStatus('loading'); setMsg('');
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/reset`,
-      });
-      if (error) throw error;
-      setStatus('ok'); setMsg('Password reset email sent.');
-    } catch (err: any) {
-      setStatus('error'); setMsg(err?.message ?? 'Could not send reset email.');
+  try {
+    const supabase = getSupabaseServer();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      // Supabase gives messages like "Invalid login credentials"
+      return { error: error.message || "Invalid credentials." };
     }
+  } catch (e) {
+    return { error: "Auth service unavailable. Try again in a moment." };
   }
 
+  // Success → take user to tenant selection
+  redirect("/tenant/select");
+}
+
+function ErrorBox({ message }: { message?: string | null }) {
+  if (!message) return null;
   return (
-    <main className="min-h-screen w-full bg-black text-white flex items-center justify-center px-6">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-white/10 bg-zinc-900/60 shadow-xl backdrop-blur p-8">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-            <p className="mt-1 text-sm text-zinc-400">Use your email and password.</p>
-          </div>
+    <div className="rounded-xl border border-red-300 bg-red-50/80 text-red-900 px-3 py-2 text-sm">
+      {message}
+    </div>
+  );
+}
 
-          <form onSubmit={onSubmit} className="space-y-4">
-            <label className="block text-sm">
-              <span className="mb-1 block text-zinc-300">Email</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@city.gov"
-                className="w-full rounded-xl border border-white/10 bg-zinc-800/70 px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/30"
-                autoComplete="email"
-                required
-              />
-            </label>
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: { error?: string };
+}) {
+  const initialError =
+    searchParams?.error === "no_tenant"
+      ? "Please choose a tenant to continue."
+      : searchParams?.error === "unknown_tenant"
+      ? "That tenant no longer exists. Please choose again."
+      : searchParams?.error === "not_member"
+      ? "You’re not a member of that tenant."
+      : null;
 
-            <label className="block text-sm">
-              <span className="mb-1 block text-zinc-300">Password</span>
-              <div className="flex items-stretch gap-2">
-                <input
-                  type={showPw ? 'text' : 'password'}
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  placeholder="Your password"
-                  className="w-full rounded-xl border border-white/10 bg-zinc-800/70 px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/30"
-                  autoComplete="current-password"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  className="px-3 rounded-xl border border-white/10 bg-zinc-800/70 text-xs"
-                  aria-label={showPw ? 'Hide password' : 'Show password'}
-                >
-                  {showPw ? 'Hide' : 'Show'}
-                </button>
-              </div>
-            </label>
+  // Minimal, standalone form (works with /login/layout.tsx you added)
+  return (
+    <main className="mx-auto max-w-md">
+      <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm p-6">
+        <h1 className="text-2xl font-semibold text-center">Sign in</h1>
+        <p className="text-sm text-muted-foreground text-center mt-1">
+          Use your email and password.
+        </p>
 
-            <button
-              type="submit"
-              disabled={status === 'loading'}
-              className="w-full rounded-xl bg-white text-black font-medium py-3 hover:bg-zinc-100 disabled:opacity-60"
-            >
-              {status === 'loading' ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
-
-          <div className="mt-4 text-sm flex items-center justify-between">
-            <span className="text-zinc-400">No self-signups.</span>
-            <button
-              onClick={onForgotPassword}
-              className="text-zinc-300 hover:underline"
-              type="button"
-              disabled={!email || status === 'loading'}
-              title={!email ? 'Enter your email first' : ''}
-            >
-              Forgot password
-            </button>
-          </div>
-
-          {msg ? (
-            <div
-              className={`mt-4 text-sm ${
-                status === 'error' ? 'text-red-400' : 'text-emerald-400'
-              }`}
-            >
-              {msg}
-            </div>
-          ) : null}
+        <div className="mt-4">
+          <ErrorBox message={initialError} />
         </div>
+
+        {/* Server Action form */}
+        <form action={doLogin.bind(null, {})} className="mt-4 space-y-4">
+          <div className="space-y-1">
+            <label className="text-sm font-medium" htmlFor="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              required
+              className="w-full border rounded-lg px-3 py-2 bg-background"
+              placeholder="you@example.com"
+              autoComplete="email"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium" htmlFor="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              required
+              className="w-full border rounded-lg px-3 py-2 bg-background"
+              placeholder="••••••••"
+              autoComplete="current-password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="w-full rounded-lg border px-4 py-2 hover:shadow-sm"
+          >
+            Sign in
+          </button>
+
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>No self-signups.</span>
+            <a href="#" className="underline">Forgot password</a>
+          </div>
+        </form>
       </div>
     </main>
   );
