@@ -1,30 +1,35 @@
-// Server-side Supabase client helper for Next.js App Router
-// Works across @supabase/ssr versions by providing get/set/remove methods.
-
+// src/lib/supabaseServer.ts
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 export function getSupabaseServer() {
   const cookieStore = cookies();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
+  return createServerClient(url, anon, {
+    cookies: {
+      get(name: string) {
+        try {
           return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options?: any) {
-          // ensure the return type is void to satisfy the expected signature
-          cookieStore.set({ name, value, ...(options || {}) });
-          return;
-        },
-        remove(name: string, options?: any) {
-          cookieStore.set({ name, value: "", ...(options || {}), maxAge: 0 });
-          return;
-        },
-      } as any,
-    } as any
-  );
+        } catch {
+          return undefined;
+        }
+      },
+      set(name: string, value: string, options: CookieOptions) {
+        try {
+          cookieStore.set({ name, value, ...options });
+        } catch {
+          // ignore write failures during RSC/edge
+        }
+      },
+      remove(name: string, options: CookieOptions) {
+        try {
+          cookieStore.set({ name, value: "", expires: new Date(0), ...options });
+        } catch {
+          // ignore
+        }
+      },
+    },
+  });
 }
