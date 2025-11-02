@@ -27,7 +27,9 @@ function isOwnerOrAdmin(role?: Role) {
  */
 export default async function Header() {
   const supabase = getSupabaseServer();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   const tenantCookieName = process.env.TENANT_COOKIE_NAME || "tenant_id";
   const tenantId = cookies().get(tenantCookieName)?.value;
@@ -69,4 +71,48 @@ export default async function Header() {
     { href: "/tenant/select", label: "Tenants", show: true },
     { href: "/owner", label: "Owner Dashboard", show: isPlatformOwner },
 
-    { href: "/work-orders", label: "Work Orders", show: isPlatformOwne
+    { href: "/work-orders", label: "Work Orders", show: isPlatformOwner || !!features.work_orders },
+    { href: "/sampling", label: "Sampling & Compliance", show: isPlatformOwner || !!features.sampling },
+    { href: "/mft", label: "MFT Tracker", show: isPlatformOwner || !!features.mft },
+    { href: "/grants", label: "Grants", show: isPlatformOwner || !!features.grants },
+
+    { href: "/settings/members", label: "Members", show: isPlatformOwner || isOwnerOrAdmin(role) },
+    { href: "/settings/invite", label: "Invite", show: isPlatformOwner || isOwnerOrAdmin(role) },
+  ];
+
+  // Identity chip content
+  const identityLabel = isPlatformOwner
+    ? "Platform Owner"
+    : tenantName
+    ? tenantName
+    : "No tenant selected";
+
+  const identityHref = isPlatformOwner ? "/owner" : tenantName ? "/" : "/tenant/select";
+
+  return (
+    <header className="sticky top-0 z-40 bg-transparent">
+      <div className="mx-auto max-w-6xl px-4 pt-3">
+        {/* Card-like container */}
+        <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm">
+          {/* Top row: identity */}
+          <div className="flex items-center justify-between gap-3 px-4 pt-3">
+            <div className="min-w-0">
+              <div className="text-xs text-muted-foreground leading-none">
+                {isPlatformOwner ? "Signed in as" : tenantName ? "Tenant" : "Context"}
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <Link
+                  href={identityHref}
+                  className="inline-flex items-center rounded-full border px-3 py-1 text-sm hover:shadow-sm transition whitespace-nowrap"
+                  title={identityLabel}
+                >
+                  {identityLabel}
+                </Link>
+                {fullName && (
+                  <span className="hidden sm:inline text-xs text-muted-foreground truncate">
+                    {fullName}
+                  </span>
+                )}
+              </div>
+            </div>
+            {/* (Optional) Right-side space for future quick actions*
