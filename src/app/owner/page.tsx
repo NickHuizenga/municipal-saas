@@ -43,56 +43,47 @@ export default async function OwnerDashboard() {
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  const { data: profile, error: profileErr } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner, full_name")
     .eq("id", user.id)
     .maybeSingle();
 
   const isOwner = !!profile?.is_platform_owner;
-  if (!isOwner) {
-    // Not a platform owner → back to regular dashboard
-    redirect("/");
-  }
+  if (!isOwner) redirect("/");
 
-  // --- 2) Load all tenants (owner policy should allow) ---
+  // --- 2) Load tenants and memberships (defensive) ---
   let tenants: UiTenant[] = [];
-  let debug: string[] = [];
+  const debug: string[] = [];
 
-  try {
-    const { data: trows, error: terr } = await supabase
-      .from("tenants")
-      .select("id, name, features")
-      .order("name", { ascending: true });
+  const { data: trows, error: terr } = await supabase
+    .from("tenants")
+    .select("id, name, features")
+    .order("name", { ascending: true });
 
-    if (terr) {
-      debug.push(`tenants error: ${terr.message}`);
-    }
+  if (terr) debug.push(`tenants error: ${terr.message}`);
 
-    // --- 3) Member counts grouped by tenant_id (one query) ---
-    const { data: counts, error: cerr } = await supabase
-      .from("tenant_memberships")
-      .select("tenant_id, count:user_id", { head: false }) // PostgREST alias count via column
-      .group("tenant_id");
+  // Fetch all memberships (owner is allowed by RLS)
+  const { data: mrows, error: merr } = await supabase
+    .from("tenant_memberships")
+    .select("tenant_id, user_id");
 
-    if (cerr) {
-      debug.push(`counts error: ${cerr.message}`);
-    }
+  if (merr) debug.push(`memberships error: ${merr.message}`);
 
-    const countByTenant = new Map<string, number>(
-      (counts ?? []).map((r: any) => [String(r.tenant_id), Number(r.count ?? 0)])
-    );
+  // Build counts per tenant_id
+  const countByTenant = new Map<string, number>();
+  (mrows ?? []).forEach((m: any) => {
+    const id = String(m.tenant_id);
+    countByTenant.set(id, (countByTenant.get(id) ?? 0) + 1);
+  });
 
-    tenants =
-      (trows ?? []).map((t: any) => ({
-        id: String(t.id),
-        name: String(t.name ?? "Unnamed"),
-        features: (t.features ?? {}) as TenantFeatureFlags,
-        memberCount: countByTenant.get(String(t.id)) ?? 0,
-      })) || [];
-  } catch (e: any) {
-    debug.push(`unexpected: ${String(e?.message ?? e)}`);
-  }
+  tenants =
+    (trows ?? []).map((t: any) => ({
+      id: String(t.id),
+      name: String(t.name ?? "Unnamed"),
+      features: (t.features ?? {}) as TenantFeatureFlags,
+      memberCount: countByTenant.get(String(t.id)) ?? 0,
+    })) || [];
 
   return (
     <main className="mx-auto max-w-6xl p-6">
@@ -111,7 +102,8 @@ export default async function OwnerDashboard() {
           {debug.length > 0 && (
             <pre className="mt-3 text-xs text-[rgb(var(--muted-foreground))] whitespace-pre-wrap">
               Debug:
-              {"\n"}{debug.join("\n")}
+              {"\n"}
+              {debug.join("\n")}
             </pre>
           )}
         </div>
