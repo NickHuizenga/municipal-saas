@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   const tenantId = url.searchParams.get('tenantId');
   if (!tenantId) return NextResponse.json({ error: 'tenantId required' }, { status: 400 });
 
-  // cookie shim (works with all @supabase/ssr versions)
+  // Cookie adapter that works across @supabase/ssr versions
   const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,11 +24,13 @@ export async function GET(req: Request) {
         get(name: string) {
           return cookieStore.get(name)?.value;
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options?: any) {
           cookieStore.set({ name, value, ...(options || {}) });
+          return;
         },
-        remove(name: string, options: any) {
+        remove(name: string, options?: any) {
           cookieStore.set({ name, value: '', ...(options || {}), maxAge: 0 });
+          return;
         },
       } as any,
     } as any
@@ -45,34 +47,30 @@ export async function GET(req: Request) {
     .single();
   if (!me?.is_platform_owner) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  // service role for cross-table + admin api
+  // service role client
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // memberships
+  // memberships for this tenant
   const { data: membershipsRaw, error: memErr } = await admin
     .from('tenant_memberships')
     .select('user_id, role')
     .eq('tenant_id', tenantId);
-
   if (memErr) return NextResponse.json({ error: memErr.message }, { status: 400 });
+
   const memberships = (membershipsRaw ?? []) as MembershipRow[];
 
-  // users list → email map
+  // users list -> map id -> email
   const { data: usersList, error: listErr } =
     await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (listErr) return NextResponse.json({ error: listErr.message }, { status: 400 });
 
   const users = (usersList?.users ?? []) as BasicUser[];
-  const emailPairs: [string, string][] = users.map(u => [
-    u.id,
-    (u.email ?? '').toLowerCase(),
-  ]);
+  const emailPairs: [string, string][] = users.map(u => [u.id, (u.email ?? '').toLowerCase()]);
   const emailById = new Map<string, string>(emailPairs);
 
-  // response rows
   const rows = memberships.map(m => ({
     user_id: m.user_id,
     email: emailById.get(m.user_id) ?? null,
