@@ -1,33 +1,21 @@
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
-  // 1) Verify caller is signed in and is platform owner
-  const cookieStore = cookies();
+  // Who's calling?
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          cookieStore.set({ name, value: '', ...options, maxAge: 0 });
-        },
-      },
-    }
+    { cookies: () => cookies() }
   );
 
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
+  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -39,56 +27,39 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // 2) Parse payload
+  // Payload
   const body = await req.json().catch(() => ({}));
   const email = (body.email ?? '').trim().toLowerCase();
-  const tenantId = body.tenantId ?? null; // optional
-  const role = body.role ?? 'viewer';     // default
+  const tenantId: string | null = body.tenantId ?? null;
+  const role: string = body.role ?? 'viewer';
+  if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 });
 
-  if (!email) {
-    return NextResponse.json({ error: 'Email is required' }, { status: 400 });
-  }
-
-  // 3) Use Service Role admin client (server only!)
+  // Admin (service role) client – server only
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY! // NEVER expose to client
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // 4) Send an invite (user sets password via email)
+  // Invite (if user exists, Supabase throws a friendly error; we continue)
   const { data: inviteRes, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email);
-  if (inviteErr) {
-    // If user already exists, we can proceed to membership step
-    if (inviteErr.message?.toLowerCase().includes('already registered')) {
-      // continue
-    } else {
-      return NextResponse.json({ error: inviteErr.message }, { status: 400 });
-    }
+  if (inviteErr && !inviteErr.message.toLowerCase().includes('already registered')) {
+    return NextResponse.json({ error: inviteErr.message }, { status: 400 });
   }
 
-  // figure out user id whether newly invited or existing
+  // Resolve user id whether new or existing
   let userId = inviteRes?.user?.id ?? null;
-
   if (!userId) {
-    // fetch existing user by email
-    const { data: got, error: getErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    if (getErr) {
-      return NextResponse.json({ error: getErr.message }, { status: 400 });
-    }
-    userId = got.users.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+    const { data: list, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 400 });
+    userId = list.users.find(u => (u.email ?? '').toLowerCase() === email)?.id ?? null;
   }
+  if (!userId) return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
 
-  if (!userId) {
-    return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
-  }
-
-  // 5) (Optional) attach them to a tenant with a role
+  // Optional: attach to tenant with role
   if (tenantId) {
-    // Service role bypasses RLS for this insert
     const { error: memErr } = await admin
       .from('tenant_memberships')
       .upsert({ tenant_id: tenantId, user_id: userId, role }, { onConflict: 'tenant_id,user_id' });
-
     if (memErr) {
       return NextResponse.json({ error: `Invited, but membership failed: ${memErr.message}`, userId }, { status: 207 });
     }
