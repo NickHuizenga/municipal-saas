@@ -115,4 +115,39 @@ export default async function Header() {
                 )}
               </div>
             </div>
-            {/* (Optional) Right-side space for future quick actions*
+            {/* (Optional) Right-side space for future quick actions */}
+            <div className="hidden sm:flex items-center gap-2" />
+          </div>
+
+          {/* Nav row: pill links */}
+          <div className="mt-3 px-2 pb-3">
+            <nav className="flex items-center gap-2 overflow-x-auto py-1 px-1">
+              {items
+                .filter((i) => i.show)
+                .map((i) => (
+                  <Link
+                    key={i.href}
+                    href={i.href}
+                    className="inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition whitespace-nowrap"
+                  >
+                    {i.label}
+                  </Link>
+                ))}
+            </nav>
+          </div>
+        </div>
+
+        {/* Alert strip when no tenant is active (non-owner) */}
+        {!tenantId && !isPlatformOwner && (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-900">
+            You don’t have a tenant active. Go to{" "}
+            <Link href="/tenant/select" className="underline">
+              Tenant Select
+            </Link>
+            .
+          </div>
+        )}
+      </div>
+    </header>
+  );
+}
