@@ -1,34 +1,40 @@
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
 export async function POST(req: Request) {
   const { tenantId, userId } = await req.json().catch(() => ({}));
-  if (!tenantId || !userId) return NextResponse.json({ error: 'tenantId and userId required' }, { status: 400 });
+  if (!tenantId || !userId) {
+    return NextResponse.json({ error: 'tenantId and userId required' }, { status: 400 });
+  }
 
-  // Auth + owner check
-  const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get: (n: string) => cookieStore.get(n)?.value,
-        set: (n: string, v: string, o: CookieOptions) => cookieStore.set({ name: n, value: v, ...o }),
-        remove: (n: string, o: CookieOptions) => cookieStore.set({ name: n, value: '', ...o, maxAge: 0 }),
-      },
-    }
+    { cookies: () => cookies() }
   );
+
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
-  const { data: me } = await supabase.from('profiles').select('is_platform_owner').eq('id', user.id).single();
+  const { data: me } = await supabase
+    .from('profiles')
+    .select('is_platform_owner')
+    .eq('id', user.id)
+    .single();
+
   if (!me?.is_platform_owner) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
 
-  // Prevent removing the last owner
+  // Guard: don’t revoke the last owner
   const { data: owners, error: ownersErr } = await admin
     .from('tenant_memberships')
     .select('user_id')
@@ -43,7 +49,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Cannot revoke the last owner of this tenant' }, { status: 409 });
   }
 
-  // Revoke membership
   const { error: delErr } = await admin
     .from('tenant_memberships')
     .delete()
