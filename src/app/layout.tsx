@@ -14,14 +14,15 @@ export const revalidate = 0;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-background text-foreground antialiased flex flex-col">
+    // Force dark theme; suppressHydrationWarning prevents class mismatch flicker
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body className="min-h-screen bg-[rgb(var(--background))] text-[rgb(var(--foreground))] antialiased flex flex-col">
         <Header />
         <div className="mx-auto w-full max-w-6xl px-4">
           <Breadcrumbs />
         </div>
         <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6">{children}</main>
-        <footer className="border-t mt-8 py-4 text-center text-xs text-muted-foreground">
+        <footer className="border-t mt-8 py-4 text-center text-xs text-[rgb(var(--muted-foreground))]">
           © {new Date().getFullYear()} Municipal SaaS Platform
         </footer>
       </body>
