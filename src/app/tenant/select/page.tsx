@@ -1,77 +1,51 @@
 // src/app/tenant/select/page.tsx
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import { getSupabaseServer } from "../../../lib/supabaseServer";
+import TenantCard from "./tenant-card";
+import Link from "next/link";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
-async function setTenantCookie(tenantId: string) {
-  "use server";
-  cookies().set({ name: "tenant_id", value: tenantId, path: "/", httpOnly: true });
-  redirect("/tenant/resolve");
-}
+export const dynamic = "force-dynamic";
 
-export default async function SelectTenantPage() {
+async function getTenantsForUser() {
   const supabase = getSupabaseServer();
-
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  if (!user) return [];
 
-  // Find tenants where the user has a membership
-  const { data: memberships, error: memErr } = await supabase
+  const { data, error } = await supabase
     .from("tenant_memberships")
-    .select("tenant_id, role")
+    .select("role, tenants!inner(id, name)")
     .eq("user_id", user.id);
 
-  if (memErr) {
-    return (
-      <main className="p-6">
-        <h1 className="text-xl font-semibold mb-2">Select a Tenant</h1>
-        <p className="text-red-500">Error loading memberships: {memErr.message}</p>
-      </main>
-    );
-  }
+  if (error || !data) return [];
+  return data.map((row: any) => ({
+    id: row.tenants.id as string,
+    name: row.tenants.name as string,
+    role: row.role as string,
+  }));
+}
 
-  if (!memberships || memberships.length === 0) {
-    return (
-      <main className="p-6">
-        <h1 className="text-xl font-semibold mb-2">Select a Tenant</h1>
-        <p className="text-gray-400">No tenants found for your account.</p>
-      </main>
-    );
-  }
-
-  // Load tenant records for those IDs
-  const tenantIds = memberships.map(m => m.tenant_id);
-  const { data: tenants, error: tenantsErr } = await supabase
-    .from("tenants")
-    .select("id, name")
-    .in("id", tenantIds);
-
-  if (tenantsErr) {
-    return (
-      <main className="p-6">
-        <h1 className="text-xl font-semibold mb-2">Select a Tenant</h1>
-        <p className="text-red-500">Error loading tenants: {tenantsErr.message}</p>
-      </main>
-    );
-  }
+export default async function TenantSelectPage() {
+  const tenants = await getTenantsForUser();
 
   return (
-    <main className="min-h-screen bg-gray-900 text-gray-100 p-6">
-      <h1 className="text-2xl font-bold mb-6">Select a Tenant</h1>
+    <main className="mx-auto max-w-6xl p-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Select a Tenant</h1>
+      <p className="text-sm text-muted-foreground mt-1 mb-6">
+        Pick a municipality to continue.
+      </p>
 
-      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-        {(tenants ?? []).map((t) => (
-          <form key={t.id} action={async () => setTenantCookie(t.id)} className="contents">
-            <button
-              type="submit"
-              className="w-full text-left p-4 rounded-xl border border-gray-700 bg-gray-800 hover:bg-gray-750 transition"
-            >
-              <div className="text-lg font-semibold">{t.name}</div>
-              <div className="text-xs text-gray-400 mt-1">{t.id}</div>
-            </button>
-          </form>
-        ))}
-      </div>
+      {tenants.length === 0 ? (
+        <div className="rounded-2xl border p-6">
+          <p className="mb-1">No tenants linked to your account yet.</p>
+          <p className="text-sm text-muted-foreground">
+            Ask an owner to invite you, or if you’re an owner,{" "}
+            <Link href="/settings/invite" className="underline">invite a user</Link>.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {tenants.map((t) => <TenantCard key={t.id} tenant={t} />)}
+        </div>
+      )}
     </main>
   );
 }
