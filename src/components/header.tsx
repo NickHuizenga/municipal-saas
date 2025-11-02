@@ -3,6 +3,9 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
 type TenantFeatures = {
   work_orders?: boolean;
@@ -17,7 +20,7 @@ function isOwnerOrAdmin(role?: Role) {
 }
 
 export default async function Header() {
-  // Hard fallback values — used if anything throws
+  // hard fallbacks so header never breaks /login
   let isPlatformOwner = false;
   let fullName: string | undefined;
   let role: Role | undefined;
@@ -34,7 +37,6 @@ export default async function Header() {
     hasTenantCookie = !!tenantId;
 
     if (user) {
-      // profile
       const { data: profile } = await supabase
         .from("profiles")
         .select("is_platform_owner, full_name")
@@ -43,7 +45,6 @@ export default async function Header() {
       isPlatformOwner = !!profile?.is_platform_owner;
       fullName = profile?.full_name ?? undefined;
 
-      // tenant context (optional)
       if (tenantId) {
         const { data } = await supabase
           .from("tenant_memberships")
@@ -58,10 +59,9 @@ export default async function Header() {
       }
     }
   } catch {
-    // swallow — use safe fallbacks so header never breaks /login
+    // swallow — render a minimal header
   }
 
-  // Build dropdown groups from whatever we have
   const viewItems = [
     { href: "/", label: "Dashboard", show: true },
     { href: "/tenant/select", label: "Tenants", show: true },
@@ -87,7 +87,6 @@ export default async function Header() {
     <header className="sticky top-0 z-40 bg-transparent">
       <div className="mx-auto max-w-6xl px-4 pt-3">
         <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm">
-          {/* identity row */}
           <div className="flex items-center justify-between gap-3 px-4 pt-3">
             <div className="min-w-0">
               <div className="text-xs text-muted-foreground leading-none">
@@ -110,7 +109,6 @@ export default async function Header() {
             <div className="hidden sm:flex items-center gap-2" />
           </div>
 
-          {/* dropdown row */}
           <div className="mt-3 px-3 pb-3">
             <div className="flex flex-wrap items-center gap-2">
               {/* VIEW */}
@@ -155,7 +153,6 @@ export default async function Header() {
           </div>
         </div>
 
-        {/* gentle alert for non-owners without an active tenant */}
         {!hasTenantCookie && !isPlatformOwner && (
           <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-900">
             You don’t have a tenant active. Go to{" "}
