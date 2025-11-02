@@ -6,8 +6,11 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 
+// Lightweight shape for what we need from Admin API
+type BasicUser = { id: string; email?: string | null };
+
 export async function POST(req: Request) {
-  // ✅ works with both old/new @supabase/ssr
+  // Works with both old/new @supabase/ssr cookie shapes
   const cookieStore = cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -48,25 +51,38 @@ export async function POST(req: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
+  // Try to invite. If already registered, we'll just look them up.
   const { data: inviteRes, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email);
   if (inviteErr && !inviteErr.message.toLowerCase().includes('already registered')) {
     return NextResponse.json({ error: inviteErr.message }, { status: 400 });
   }
 
-  let userId = inviteRes?.user?.id ?? null;
+  // Resolve userId either from invite or by listing users
+  let userId: string | null = inviteRes?.user?.id ?? null;
+
   if (!userId) {
     const { data: list, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 400 });
-    userId = list.users.find(u => (u.email ?? '').toLowerCase() === email)?.id ?? null;
-  }
-  if (!userId) return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
 
+    const users = (list?.users ?? []) as BasicUser[]; // 👈 tell TS what this is
+    const match = users.find((u) => (u.email ?? '').toLowerCase() === email);
+    userId = match?.id ?? null;
+  }
+
+  if (!userId) {
+    return NextResponse.json({ error: 'Could not resolve user id after invite' }, { status: 500 });
+  }
+
+  // Optionally attach to tenant with role
   if (tenantId) {
     const { error: memErr } = await admin
       .from('tenant_memberships')
       .upsert({ tenant_id: tenantId, user_id: userId, role }, { onConflict: 'tenant_id,user_id' });
     if (memErr) {
-      return NextResponse.json({ error: `Invited, but membership failed: ${memErr.message}`, userId }, { status: 207 });
+      return NextResponse.json(
+        { error: `Invited, but membership failed: ${memErr.message}`, userId },
+        { status: 207 }
+      );
     }
   }
 
