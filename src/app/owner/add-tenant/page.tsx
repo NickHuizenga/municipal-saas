@@ -1,5 +1,4 @@
 // src/app/owner/add-tenant/page.tsx
-import SmartForm from "@/components/SmartForm";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { redirect } from "next/navigation";
 
@@ -26,23 +25,20 @@ async function createTenant(formData: FormData) {
 
   if (!prof?.is_platform_owner) redirect("/");
 
-  // 1) Create tenant (features default empty {})
+  // 1) Create tenant (features default {})
   const { data: t, error: terr } = await supabase
     .from("tenants")
     .insert({ name, features: {} })
     .select("id")
     .maybeSingle();
+  if (terr || !t?.id) redirect("/owner"); // fall back
 
-  if (terr || !t?.id) return;
-
-  // 2) Ensure the creator is an owner member of the new tenant
+  // 2) Make current user owner of the new tenant
   await supabase
     .from("tenant_memberships")
-    .insert({ tenant_id: t.id, user_id: user.id, role: "owner" })
-    .select("tenant_id")
-    .maybeSingle();
+    .insert({ tenant_id: t.id, user_id: user.id, role: "owner" });
 
-  // 3) Back to owner dashboard
+  // 3) Go back to Owner dashboard
   redirect("/owner");
 }
 
@@ -63,12 +59,13 @@ export default async function AddTenantPage() {
   return (
     <main className="mx-auto max-w-xl p-6">
       <h1 className="text-2xl font-semibold text-[rgb(var(--foreground))]">Add Tenant</h1>
-      <p className="text-sm text-[rgb(var(--muted-foreground))] mb-4">
+      <p className="mb-4 text-sm text-[rgb(var(--muted-foreground))]">
         Create a new municipality and assign yourself as its owner.
       </p>
 
-      <SmartForm action={createTenant} className="rounded-2xl border border-[rgb(var(--border))] p-4">
-        <label className="block text-sm mb-1">Tenant name</label>
+      {/* NOTE: plain <form> so Next can follow redirect without our client reload */}
+      <form action={createTenant} className="rounded-2xl border border-[rgb(var(--border))] p-4">
+        <label className="mb-1 block text-sm">Tenant name</label>
         <input
           name="name"
           required
@@ -81,7 +78,7 @@ export default async function AddTenantPage() {
         >
           Create Tenant
         </button>
-      </SmartForm>
+      </form>
     </main>
   );
 }
