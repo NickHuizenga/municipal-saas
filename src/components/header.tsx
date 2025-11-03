@@ -3,163 +3,230 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+const TENANT_COOKIE_NAME = process.env.TENANT_COOKIE_NAME ?? "tenant_id";
 
-type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
+type Role =
+  | "owner"
+  | "admin"
+  | "dispatcher"
+  | "crew_leader"
+  | "crew"
+  | "viewer";
+
 type TenantFeatures = {
   work_orders?: boolean;
   sampling?: boolean;
   mft?: boolean;
   grants?: boolean;
-  [key: string]: boolean | undefined;
 };
 
-function isOwnerOrAdmin(role?: Role) {
-  return role === "owner" || role === "admin";
+function Pill({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Dropdown({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  // Uses native <details> for zero-JS dropdown
+  return (
+    <details className="group relative">
+      <summary className="list-none cursor-pointer">
+        <Pill className="hover:bg-[rgb(var(--muted))]">
+          {label}
+          <svg
+            className="ml-2 h-4 w-4 transition group-open:rotate-180"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.23 7.21a.75.75 0 011.06.02L10 11.106l3.71-3.875a.75.75 0 111.08 1.04l-4.24 4.43a.75.75 0 01-1.08 0l-4.24-4.43a.75.75 0 01.02-1.06z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </Pill>
+      </summary>
+      <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--popover))] shadow-xl">
+        <nav className="flex flex-col py-1">{children}</nav>
+      </div>
+    </details>
+  );
+}
+
+function DropItem({
+  href,
+  children,
+  disabled = false,
+}: {
+  href: string;
+  children: React.ReactNode;
+  disabled?: boolean;
+}) {
+  const cls =
+    "px-3 py-2 text-sm text-[rgb(var(--popover-foreground))] hover:bg-[rgb(var(--muted))]";
+  if (disabled) {
+    return (
+      <div
+        className={`${cls} opacity-50 cursor-not-allowed select-none`}
+        aria-disabled="true"
+      >
+        {children}
+      </div>
+    );
+  }
+  return (
+    <Link href={href} className={cls}>
+      {children}
+    </Link>
+  );
 }
 
 export default async function Header() {
-  // hard fallbacks so header never breaks /login
-  let isPlatformOwner = false;
-  let fullName: string | undefined;
-  let role: Role | undefined;
-  let tenantName: string | undefined;
-  let features: TenantFeatures = {};
-  let hasTenantCookie = false;
+  const supabase = getSupabaseServer();
 
-  try {
-    const supabase = getSupabaseServer();
-    const { data: { user } } = await supabase.auth.getUser();
+  // Current user
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth?.user;
 
-    const tenantCookieName = process.env.TENANT_COOKIE_NAME || "tenant_id";
-    const tenantId = cookies().get(tenantCookieName)?.value;
-    hasTenantCookie = !!tenantId;
-
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_platform_owner, full_name")
-        .eq("id", user.id)
-        .maybeSingle();
-      isPlatformOwner = !!profile?.is_platform_owner;
-      fullName = profile?.full_name ?? undefined;
-
-      if (tenantId) {
-        const { data } = await supabase
-          .from("tenant_memberships")
-          .select("role, tenants!inner(name, features)")
-          .eq("user_id", user.id)
-          .eq("tenant_id", tenantId)
-          .maybeSingle();
-
-        role = (data?.role as Role) || undefined;
-        tenantName = (data as any)?.tenants?.name;
-        features = ((data as any)?.tenants?.features ?? {}) as TenantFeatures;
-      }
-    }
-  } catch {
-    // swallow — render a minimal header
+  // If unauthenticated, render a minimal bar
+  if (!user) {
+    return (
+      <div className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Pill>Signed out</Pill>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/login"
+              className="rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]"
+            >
+              Login
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const viewItems = [
+  // Profile & platform-owner
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, is_platform_owner")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const name = profile?.full_name ?? user.email ?? "User";
+  const isPlatformOwner = !!profile?.is_platform_owner;
+
+  // Current tenant & membership role
+  const tenantId = cookies().get(TENANT_COOKIE_NAME)?.value ?? null;
+
+  let role: Role | null = null;
+  if (tenantId) {
+    const { data: membership } = await supabase
+      .from("tenant_memberships")
+      .select("role")
+      .eq("tenant_id", tenantId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    role = (membership?.role as Role) ?? null;
+  }
+
+  // Current tenant features to drive Module dropdown
+  let features: TenantFeatures | null = null;
+  if (tenantId) {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("features")
+      .eq("id", tenantId)
+      .maybeSingle();
+    features = (tenant?.features as TenantFeatures) ?? null;
+  }
+
+  // VIEW dropdown items (permission aware)
+  const viewItems: { href: string; label: string; show: boolean }[] = [
     { href: "/", label: "Dashboard", show: true },
     { href: "/tenant/select", label: "Tenants", show: true },
     { href: "/owner", label: "Owner Dashboard", show: isPlatformOwner },
   ];
 
-  const moduleItems = [
-    { href: "/work-orders", label: "Work Orders", show: isPlatformOwner || !!features.work_orders },
-    { href: "/sampling", label: "Sampling & Compliance", show: isPlatformOwner || !!features.sampling },
-    { href: "/mft", label: "MFT Tracker", show: isPlatformOwner || !!features.mft },
-    { href: "/grants", label: "Grants", show: isPlatformOwner || !!features.grants },
-  ];
+  // MODULE dropdown items (filtered by features if tenant selected)
+  // If no tenant yet, show everything enabled for owner, otherwise filter by features.
+  const modulesCatalog = [
+    { key: "work_orders", label: "Work Orders", href: "/work-orders" },
+    { key: "sampling", label: "Sampling & Compliance", href: "/sampling" },
+    { key: "mft", label: "MFT Tracker", href: "/mft" },
+    { key: "grants", label: "Grants", href: "/grants" },
+  ] as const;
 
-  const identityLabel = isPlatformOwner
-    ? "Platform Owner"
-    : tenantName
-    ? tenantName
-    : "No tenant selected";
-
-  const identityHref = isPlatformOwner ? "/owner" : tenantName ? "/" : "/tenant/select";
+  const modulesToShow = modulesCatalog.map((m) => {
+    let enabled = true;
+    if (tenantId && features) {
+      enabled = !!(features as any)[m.key];
+    }
+    // Platform owner sees items even when disabled, but grayed out if tenant has it off
+    const disabled = tenantId ? !enabled && !isPlatformOwner : false;
+    const visible = isPlatformOwner || enabled || !tenantId;
+    return { ...m, visible, disabled };
+  });
 
   return (
-    <header className="sticky top-0 z-40 bg-transparent">
-      <div className="mx-auto max-w-6xl px-4 pt-3">
-        <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm">
-          <div className="flex items-center justify-between gap-3 px-4 pt-3">
-            <div className="min-w-0">
-              <div className="text-xs text-muted-foreground leading-none">
-                {isPlatformOwner ? "Signed in as" : tenantName ? "Tenant" : "Context"}
-              </div>
-              <div className="mt-1 flex items-center gap-2">
-                <Link
-                  href={identityHref}
-                  className="inline-flex items-center rounded-full border px-3 py-1 text-sm hover:shadow-sm transition whitespace-nowrap"
-                >
-                  {identityLabel}
-                </Link>
-                {fullName && (
-                  <span className="hidden sm:inline text-xs text-muted-foreground truncate">
-                    {fullName}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="hidden sm:flex items-center gap-2" />
-          </div>
-
-          <div className="mt-3 px-3 pb-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {/* VIEW */}
-              <details className="group relative">
-                <summary className="list-none inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition cursor-pointer">
-                  View <span className="ml-2 inline-block transition group-open:rotate-180">▾</span>
-                </summary>
-                <div className="absolute mt-2 w-56 rounded-2xl border bg-popover shadow-md overflow-hidden z-50">
-                  <ul className="py-1 text-sm">
-                    {viewItems.filter(i => i.show).map(i => (
-                      <li key={i.href}>
-                        <Link href={i.href} className="block px-3 py-2 hover:bg-muted transition">
-                          {i.label}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </details>
-
-              {/* MODULE */}
-              <details className="group relative">
-                <summary className="list-none inline-flex items-center rounded-2xl border px-3 py-1.5 text-sm hover:shadow-sm hover:bg-background transition cursor-pointer">
-                  Module <span className="ml-2 inline-block transition group-open:rotate-180">▾</span>
-                </summary>
-                <div className="absolute mt-2 w-72 rounded-2xl border bg-popover shadow-md overflow-hidden z-50">
-                  <ul className="py-1 text-sm">
-                    {moduleItems.filter(i => i.show).map(i => (
-                      <li key={i.href}>
-                        <Link href={i.href} className="block px-3 py-2 hover:bg-muted transition">
-                          {i.label}
-                        </Link>
-                      </li>
-                    ))}
-                    {moduleItems.every(i => !i.show) && (
-                      <li className="px-3 py-2 text-muted-foreground">No modules available</li>
-                    )}
-                  </ul>
-                </div>
-              </details>
-            </div>
-          </div>
+    <div className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        {/* Left: Account info */}
+        <div className="flex items-center gap-3">
+          <Pill>
+            {isPlatformOwner ? "Platform Owner" : role ? role : "Member"}
+          </Pill>
+          <span className="text-sm text-[rgb(var(--muted-foreground))]">
+            {name}
+          </span>
         </div>
 
-        {!hasTenantCookie && !isPlatformOwner && (
-          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 text-sm text-amber-900">
-            You don’t have a tenant active. Go to{" "}
-            <Link href="/tenant/select" className="underline">Tenant Select</Link>.
-          </div>
-        )}
+        {/* Right: Dropdowns (side by side) */}
+        <div className="flex items-center gap-3">
+          <Dropdown label="View">
+            {viewItems
+              .filter((i) => i.show)
+              .map((i) => (
+                <DropItem key={i.href} href={i.href}>
+                  {i.label}
+                </DropItem>
+              ))}
+          </Dropdown>
+
+          <Dropdown label="Module">
+            {modulesToShow
+              .filter((m) => m.visible)
+              .map((m) => (
+                <DropItem
+                  key={m.href}
+                  href={m.href}
+                  disabled={m.disabled}
+                >
+                  {m.label}
+                </DropItem>
+              ))}
+          </Dropdown>
+        </div>
       </div>
-    </header>
+    </div>
   );
 }
