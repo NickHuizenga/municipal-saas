@@ -1,119 +1,116 @@
-"use client";
-
+// src/components/header.tsx
+import { cookies } from "next/headers";
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import NavMenusClient from "@/components/NavMenusClient";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
-function Pill({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+const TENANT_COOKIE_NAME = process.env.TENANT_COOKIE_NAME ?? "tenant_id";
+
+type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
+type TenantFeatures = { work_orders?: boolean; sampling?: boolean; mft?: boolean; grants?: boolean };
+
+function Pill({ children }: { children: React.ReactNode }) {
   return (
-    <span
-      className={`inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] ${className}`}
-    >
+    <span className="inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))]">
       {children}
     </span>
   );
 }
 
-function Dropdown({
-  label,
-  items,
-}: {
-  label: string;
-  items: { label: string; href: string; disabled?: boolean }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+export default async function Header() {
+  const supabase = getSupabaseServer();
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  // Current user
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth?.user;
 
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))] focus:outline-none"
-      >
-        {label}
-        <svg
-          className={`ml-2 h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 011.06.02L10 11.106l3.71-3.875a.75.75 0 111.08 1.04l-4.24 4.43a.75.75 0 01-1.08 0l-4.24-4.43a.75.75 0 01.02-1.06z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--popover))] shadow-xl">
-          <nav className="flex flex-col py-1">
-            {items.map((item) =>
-              item.disabled ? (
-                <div
-                  key={item.label}
-                  className="px-3 py-2 text-sm text-[rgb(var(--popover-foreground))] opacity-50 cursor-not-allowed select-none"
-                >
-                  {item.label}
-                </div>
-              ) : (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  onClick={() => setOpen(false)}
-                  className="px-3 py-2 text-sm text-[rgb(var(--popover-foreground))] hover:bg-[rgb(var(--muted))]"
-                >
-                  {item.label}
-                </Link>
-              )
-            )}
-          </nav>
+  // Signed-out minimal header
+  if (!user) {
+    return (
+      <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Pill>Signed out</Pill>
+          </div>
+          <Link
+            href="/login"
+            className="rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]"
+          >
+            Login
+          </Link>
         </div>
-      )}
-    </div>
-  );
-}
+      </header>
+    );
+  }
 
-export default function Header() {
-  const name = "Nick";
-  const isPlatformOwner = true;
-  const role = "owner";
+  // Profile / platform owner
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, is_platform_owner")
+    .eq("id", user.id)
+    .maybeSingle();
 
-  const viewItems = [
+  const name = profile?.full_name ?? user.email ?? "User";
+  const isPlatformOwner = !!profile?.is_platform_owner;
+
+  // Current tenant + membership
+  const tenantId = cookies().get(TENANT_COOKIE_NAME)?.value ?? null;
+
+  let role: Role | null = null;
+  if (tenantId) {
+    const { data: membership } = await supabase
+      .from("tenant_memberships")
+      .select("role")
+      .eq("tenant_id", tenantId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    role = (membership?.role as Role) ?? null;
+  }
+
+  // Current tenant features to restrict module menu
+  let features: TenantFeatures | null = null;
+  if (tenantId) {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("features")
+      .eq("id", tenantId)
+      .maybeSingle();
+    features = (tenant?.features as TenantFeatures) ?? null;
+  }
+
+  // VIEW menu
+  const viewItems: { label: string; href: string }[] = [
     { href: "/", label: "Dashboard" },
     { href: "/tenant/select", label: "Tenants" },
-    { href: "/owner", label: "Owner Dashboard" },
+    ...(isPlatformOwner ? [{ href: "/owner", label: "Owner Dashboard" }] : []),
   ];
 
-  const moduleItems = [
-    { href: "/work-orders", label: "Work Orders" },
-    { href: "/sampling", label: "Sampling & Compliance" },
-    { href: "/mft", label: "MFT Tracker" },
-    { href: "/grants", label: "Grants" },
-  ];
+  // MODULE menu (disabled if tenant lacks the feature and user is not platform owner)
+  const catalog = [
+    { key: "work_orders", label: "Work Orders", href: "/work-orders" },
+    { key: "sampling", label: "Sampling & Compliance", href: "/sampling" },
+    { key: "mft", label: "MFT Tracker", href: "/mft" },
+    { key: "grants", label: "Grants", href: "/grants" },
+  ] as const;
+
+  const moduleItems = catalog.map((m) => {
+    const enabled = tenantId && features ? !!(features as any)[m.key] : true;
+    const disabled = tenantId ? !enabled && !isPlatformOwner : false;
+    const visible = isPlatformOwner || enabled || !tenantId;
+    return visible ? { label: m.label, href: m.href, disabled } : null;
+  }).filter(Boolean) as { label: string; href: string; disabled?: boolean }[];
 
   return (
     <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        {/* Left side: Account info */}
+        {/* Left: account info */}
         <div className="flex items-center gap-3">
-          <Pill>{isPlatformOwner ? "Platform Owner" : role}</Pill>
+          <Pill>{isPlatformOwner ? "Platform Owner" : role ?? "Member"}</Pill>
           <span className="text-sm text-[rgb(var(--muted-foreground))]">{name}</span>
         </div>
 
-        {/* Right side: Dropdowns */}
-        <div className="flex items-center gap-3">
-          <Dropdown label="View" items={viewItems} />
-          <Dropdown label="Module" items={moduleItems} />
-        </div>
+        {/* Right: dropdowns (client for click-outside + auto-close) */}
+        <NavMenusClient viewItems={viewItems} moduleItems={moduleItems} />
       </div>
     </header>
   );
