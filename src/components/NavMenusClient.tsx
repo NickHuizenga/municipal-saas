@@ -1,15 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-function Dropdown({
-  label,
-  items,
-}: {
-  label: string;
-  items: { label: string; href: string; disabled?: boolean }[];
-}) {
+type MenuItem = { label: string; href: string; disabled?: boolean };
+
+function Dropdown({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -58,7 +54,7 @@ function Dropdown({
                 <Link
                   key={item.label}
                   href={item.href}
-                  onClick={() => setOpen(false)} // auto-close on select
+                  onClick={() => setOpen(false)}
                   className="px-3 py-2 text-sm text-[rgb(var(--popover-foreground))] hover:bg-[rgb(var(--muted))]"
                 >
                   {item.label}
@@ -75,14 +71,25 @@ function Dropdown({
 export default function NavMenusClient({
   viewItems,
   moduleItems,
+  addItems,
+  showAddWhenPathStartsWith = "/owner",
 }: {
-  viewItems: { label: string; href: string }[];
-  moduleItems: { label: string; href: string; disabled?: boolean }[];
+  viewItems: MenuItem[];
+  moduleItems: MenuItem[];
+  addItems?: MenuItem[]; // only for platform owners
+  showAddWhenPathStartsWith?: string; // render Add only on /owner*
 }) {
+  const showAdd = useMemo(() => {
+    if (!addItems || addItems.length === 0) return false;
+    if (typeof window === "undefined") return false;
+    return window.location.pathname.startsWith(showAddWhenPathStartsWith);
+  }, [addItems, showAddWhenPathStartsWith]);
+
   return (
     <div className="flex items-center gap-3">
       <Dropdown label="View" items={viewItems} />
       <Dropdown label="Module" items={moduleItems} />
+      {showAdd ? <Dropdown label="Add" items={addItems!} /> : null}
     </div>
   );
 }
