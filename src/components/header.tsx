@@ -20,11 +20,10 @@ function Pill({ children }: { children: React.ReactNode }) {
 export default async function Header() {
   const supabase = getSupabaseServer();
 
-  // Current user
+  // Auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
 
-  // Signed-out minimal header
   if (!user) {
     return (
       <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
@@ -43,17 +42,16 @@ export default async function Header() {
     );
   }
 
-  // Profile / platform owner
+  // Profile
   const { data: profile } = await supabase
     .from("profiles")
     .select("full_name, is_platform_owner")
     .eq("id", user.id)
     .maybeSingle();
-
   const name = profile?.full_name ?? user.email ?? "User";
   const isPlatformOwner = !!profile?.is_platform_owner;
 
-  // Current tenant + membership
+  // Tenant & membership
   const tenantId = cookies().get(TENANT_COOKIE_NAME)?.value ?? null;
 
   let role: Role | null = null;
@@ -67,7 +65,7 @@ export default async function Header() {
     role = (membership?.role as Role) ?? null;
   }
 
-  // Current tenant features to restrict module menu
+  // Features for Module menu
   let features: TenantFeatures | null = null;
   if (tenantId) {
     const { data: tenant } = await supabase
@@ -79,13 +77,13 @@ export default async function Header() {
   }
 
   // VIEW menu
-  const viewItems: { label: string; href: string }[] = [
+  const viewItems = [
     { href: "/", label: "Dashboard" },
     { href: "/tenant/select", label: "Tenants" },
     ...(isPlatformOwner ? [{ href: "/owner", label: "Owner Dashboard" }] : []),
   ];
 
-  // MODULE menu (disabled if tenant lacks the feature and user is not platform owner)
+  // MODULE menu (respect tenant features; owner can see disabled but they’re greyed out)
   const catalog = [
     { key: "work_orders", label: "Work Orders", href: "/work-orders" },
     { key: "sampling", label: "Sampling & Compliance", href: "/sampling" },
@@ -93,12 +91,24 @@ export default async function Header() {
     { key: "grants", label: "Grants", href: "/grants" },
   ] as const;
 
-  const moduleItems = catalog.map((m) => {
-    const enabled = tenantId && features ? !!(features as any)[m.key] : true;
-    const disabled = tenantId ? !enabled && !isPlatformOwner : false;
-    const visible = isPlatformOwner || enabled || !tenantId;
-    return visible ? { label: m.label, href: m.href, disabled } : null;
-  }).filter(Boolean) as { label: string; href: string; disabled?: boolean }[];
+  const moduleItems = catalog
+    .map((m) => {
+      const enabled = tenantId && features ? !!(features as any)[m.key] : true;
+      const disabled = tenantId ? !enabled && !isPlatformOwner : false;
+      const visible = isPlatformOwner || enabled || !tenantId;
+      return visible ? { label: m.label, href: m.href, disabled } : null;
+    })
+    .filter(Boolean) as { label: string; href: string; disabled?: boolean }[];
+
+  // ADD menu (owner page only). “Add User” requires tenant pre-selection.
+  const inviteHref = tenantId ? `/invite?tenant_id=${encodeURIComponent(tenantId)}` : "/invite";
+  const addItems =
+    isPlatformOwner
+      ? [
+          { label: "Add Tenant", href: "/owner/add-tenant" },
+          { label: "Add User", href: inviteHref, disabled: !tenantId }, // disabled until a tenant is selected
+        ]
+      : [];
 
   return (
     <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
@@ -109,8 +119,13 @@ export default async function Header() {
           <span className="text-sm text-[rgb(var(--muted-foreground))]">{name}</span>
         </div>
 
-        {/* Right: dropdowns (client for click-outside + auto-close) */}
-        <NavMenusClient viewItems={viewItems} moduleItems={moduleItems} />
+        {/* Right: View / Module / Add (Add shows only on /owner via client check) */}
+        <NavMenusClient
+          viewItems={viewItems}
+          moduleItems={moduleItems}
+          addItems={isPlatformOwner ? addItems : undefined}
+          showAddWhenPathStartsWith="/owner"
+        />
       </div>
     </header>
   );
