@@ -1,5 +1,4 @@
 // src/app/invite/page.tsx
-import SmartForm from "@/components/SmartForm";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { redirect } from "next/navigation";
@@ -16,16 +15,15 @@ async function doInvite(formData: FormData) {
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const tenant_id = String(formData.get("tenant_id") ?? "");
-  const role = (String(formData.get("role") ?? "viewer") as Role);
+  const role = String(formData.get("role") ?? "viewer") as Role;
 
   if (!email || !tenant_id) return;
 
-  // Auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // Permission: platform owner OR owner of the tenant
+  // platform owner OR owner of tenant
   const { data: prof } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -44,23 +42,15 @@ async function doInvite(formData: FormData) {
   }
   if (!allowed) redirect("/");
 
-  // 1) Invite user via Admin API (creates auth user immediately)
+  // Invite user via Admin API
   const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email);
-  if (inviteErr || !invited?.user) {
-    // Could also render a toast; just return to avoid reload loop
-    return;
-  }
+  if (inviteErr || !invited?.user) redirect("/owner"); // bail
 
-  const invitedUserId = invited.user.id;
-
-  // 2) Assign membership to the tenant
+  // Add membership
   await supabase
     .from("tenant_memberships")
-    .insert({ tenant_id, user_id: invitedUserId, role })
-    .select("tenant_id")
-    .maybeSingle();
+    .insert({ tenant_id, user_id: invited.user.id, role });
 
-  // 3) Done → back to owner dashboard (SmartForm also reloads, but redirect keeps deep links clean)
   redirect("/owner");
 }
 
@@ -79,11 +69,8 @@ export default async function InvitePage({
     .select("is_platform_owner")
     .eq("id", user.id)
     .maybeSingle();
-
   const isPlatformOwner = !!prof?.is_platform_owner;
 
-  // Tenants current user can invite into:
-  // Platform owner: all tenants; otherwise only tenants where user is owner.
   const tenantQuery = isPlatformOwner
     ? supabase.from("tenants").select("id, name").order("name")
     : supabase
@@ -96,31 +83,33 @@ export default async function InvitePage({
   const tenants: { id: string; name: string }[] =
     (rows ?? []).map((r: any) => ("tenants" in r ? r.tenants : r)) ?? [];
 
-  const preselect = (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) || "";
+  const preselect =
+    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) || "";
 
   return (
     <main className="mx-auto max-w-xl p-6">
       <h1 className="text-2xl font-semibold text-[rgb(var(--foreground))]">Invite User</h1>
-      <p className="text-sm text-[rgb(var(--muted-foreground))] mb-4">
-        Invite a user and assign them to a tenant. A tenant selection is required.
+      <p className="mb-4 text-sm text-[rgb(var(--muted-foreground))]">
+        Invite a user and assign them to a tenant. Tenant selection is required.
       </p>
 
-      <SmartForm action={doInvite} className="rounded-2xl border border-[rgb(var(--border))] p-4">
-        <label className="block text-sm mb-1">Email</label>
+      {/* NOTE: plain <form> so Next can follow redirect without client reload */}
+      <form action={doInvite} className="rounded-2xl border border-[rgb(var(--border))] p-4">
+        <label className="mb-1 block text-sm">Email</label>
         <input
           name="email"
           type="email"
           required
           placeholder="user@example.com"
-          className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm mb-3"
+          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         />
 
-        <label className="block text-sm mb-1">Tenant</label>
+        <label className="mb-1 block text-sm">Tenant</label>
         <select
           name="tenant_id"
           required
           defaultValue={preselect || ""}
-          className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm mb-3"
+          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         >
           <option value="" disabled>
             Select a tenant…
@@ -132,11 +121,11 @@ export default async function InvitePage({
           ))}
         </select>
 
-        <label className="block text-sm mb-1">Role</label>
+        <label className="mb-1 block text-sm">Role</label>
         <select
           name="role"
           defaultValue="viewer"
-          className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm mb-4"
+          className="mb-4 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         >
           <option value="viewer">viewer</option>
           <option value="crew">crew</option>
@@ -152,7 +141,7 @@ export default async function InvitePage({
         >
           Send Invite
         </button>
-      </SmartForm>
+      </form>
     </main>
   );
 }
