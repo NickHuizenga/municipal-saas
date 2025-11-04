@@ -2,11 +2,18 @@
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import SaveButton from "@/components/SaveButton";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
+type Role =
+  | "owner"
+  | "admin"
+  | "dispatcher"
+  | "crew_leader"
+  | "crew"
+  | "viewer";
 
 async function doInvite(formData: FormData) {
   "use server";
@@ -21,12 +28,10 @@ async function doInvite(formData: FormData) {
 
   if (!email || !tenant_id) return;
 
-  // 1️⃣ Auth check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // 2️⃣ Permission check: must be platform owner or tenant owner
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -49,8 +54,8 @@ async function doInvite(formData: FormData) {
 
   if (!allowed) redirect("/");
 
-  // 3️⃣ Invite user
   let invitedUserId: string | null = null;
+
   const { data: inviteData, error: inviteErr } =
     await (admin as any).auth.admin.inviteUserByEmail(email);
 
@@ -60,7 +65,6 @@ async function doInvite(formData: FormData) {
     if (userObj?.id) invitedUserId = userObj.id;
   }
 
-  // 4️⃣ Fallback: listUsers if invite returned null
   if (!invitedUserId && inviteErr) {
     try {
       const listRes = await (admin as any).auth.admin.listUsers({
@@ -84,11 +88,10 @@ async function doInvite(formData: FormData) {
   }
 
   if (!invitedUserId) {
-    console.error("❌ Could not resolve invitedUserId for email:", email, inviteErr);
+    console.error("Could not resolve invitedUserId for email:", email, inviteErr);
     redirect("/owner");
   }
 
-  // 5️⃣ Upsert membership (admin bypasses RLS)
   await admin
     .from("tenant_memberships")
     .upsert(
@@ -100,7 +103,6 @@ async function doInvite(formData: FormData) {
       { onConflict: "tenant_id,user_id" }
     );
 
-  // 6️⃣ Upsert profile with provided name
   if (full_name) {
     await admin.from("profiles").upsert(
       {
@@ -112,7 +114,6 @@ async function doInvite(formData: FormData) {
     );
   }
 
-  // 7️⃣ Redirect back
   redirect("/owner");
 }
 
@@ -179,20 +180,19 @@ export default async function InvitePage({
       </p>
 
       <form
+        id="invite-form"
         action={doInvite}
         className="rounded-2xl border border-[rgb(var(--border))] p-4"
       >
-        {/* Full Name */}
         <label className="mb-1 block text-sm">Full Name</label>
         <input
           name="full_name"
           type="text"
-          placeholder="Jane Doe"
           required
+          placeholder="Jane Doe"
           className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         />
 
-        {/* Email */}
         <label className="mb-1 block text-sm">Email</label>
         <input
           name="email"
@@ -202,7 +202,6 @@ export default async function InvitePage({
           className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         />
 
-        {/* Tenant */}
         <label className="mb-1 block text-sm">Tenant</label>
         <select
           name="tenant_id"
@@ -220,7 +219,6 @@ export default async function InvitePage({
           ))}
         </select>
 
-        {/* Role */}
         <label className="mb-1 block text-sm">Role</label>
         <select
           name="role"
@@ -235,12 +233,7 @@ export default async function InvitePage({
           <option value="owner">owner</option>
         </select>
 
-        <button
-          type="submit"
-          className="inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
-        >
-          Send Invite
-        </button>
+        <SaveButton label="Send Invite" formId="invite-form" />
       </form>
     </main>
   );
