@@ -12,6 +12,7 @@ export default function SaveButton({ formId, label, className }: Props) {
   const [dirty, setDirty] = useState(false);
   const [flashing, setFlashing] = useState(false);
 
+  // Watch the target form for any changes to mark the button as "dirty"
   useEffect(() => {
     const form = document.getElementById(formId) as HTMLFormElement | null;
     if (!form) return;
@@ -28,10 +29,17 @@ export default function SaveButton({ formId, label, className }: Props) {
   }, [formId]);
 
   const handleClick = () => {
-    // user clicked submit
+    // Visual feedback
     setFlashing(true);
     setDirty(false);
     setTimeout(() => setFlashing(false), 350);
+
+    // Force a full page refresh shortly after submit is triggered
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        window.location.reload();
+      }, 400);
+    }
   };
 
   const base =
