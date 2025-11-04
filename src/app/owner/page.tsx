@@ -1,5 +1,4 @@
 // src/app/owner/page.tsx
-import SmartForm from "@/components/SmartForm";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
@@ -31,7 +30,7 @@ type UiMember = {
   full_name?: string | null;
 };
 
-/* -------------------- Helpers -------------------- */
+/* -------------------- Helper -------------------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -65,36 +64,20 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
   };
 
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) redirect("/login");
+  const user = auth?.user;
+  if (!user) redirect("/login");
 
-  // Must be platform owner
-  const { data: prof, error: pErr } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-  if (pErr || !prof?.is_platform_owner) redirect("/");
-
-  // Update and immediately read back to confirm it stuck
-  const { data, error } = await supabase
-    .from("tenants")
-    .update({ features: flags })
-    .eq("id", tenant_id)
-    .select("id, features")
+    .eq("id", user.id)
     .maybeSingle();
 
-  if (error) {
-    // RLS or type mismatch most likely; bail without reload
-    return;
-  }
-  // If DB still doesn't reflect what we set, also bail (no reload)
-  if (!data?.features || data.features.grants !== flags.grants || data.features.sampling !== flags.sampling ||
-      data.features.work_orders !== flags.work_orders || data.features.mft !== flags.mft) {
-    return;
-  }
+  if (!profile?.is_platform_owner) redirect("/");
 
-  // SmartForm will flash + reload
-  return;
+  await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
+
+  redirect("/owner");
 }
 
 async function doUpdateRole(formData: FormData): Promise<void> {
@@ -109,25 +92,33 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   if (!ROLES.includes(role)) return;
 
   const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) redirect("/login");
+  const user = auth?.user;
+  if (!user) redirect("/login");
 
-  const { data: prof, error: pErr } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
-    .eq("id", auth.user.id)
+    .eq("id", user.id)
     .maybeSingle();
-  if (pErr || !prof?.is_platform_owner) redirect("/");
 
-  // Guard: cannot demote last owner
-  const { data: mrows, error: mErr } = await supabase
+  if (!profile?.is_platform_owner) redirect("/");
+
+  // Guard: cannot demote the last owner of a tenant
+  const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
-  if (mErr) return;
 
-  const ownerIds = (mrows ?? []).filter((m: any) => m.role === "owner").map((m: any) => String(m.user_id));
+  const ownerIds =
+    (mrows ?? [])
+      .filter((m: any) => m.role === "owner")
+      .map((m: any) => String(m.user_id)) || [];
+
   const isTargetOwner = ownerIds.includes(user_id);
-  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) return;
+  if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
+    // Prevent demoting last owner; just go back
+    redirect("/owner");
+  }
 
   await supabase
     .from("tenant_memberships")
@@ -135,7 +126,7 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  return; // SmartForm reloads
+  redirect("/owner");
 }
 
 /* -------------------- Page -------------------- */
@@ -143,7 +134,7 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 export default async function OwnerDashboard() {
   const supabase = getSupabaseServer();
 
-  // auth + platform owner check
+  // Auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -153,9 +144,10 @@ export default async function OwnerDashboard() {
     .select("is_platform_owner, full_name")
     .eq("id", user.id)
     .maybeSingle();
+
   if (!profile?.is_platform_owner) redirect("/");
 
-  // tenants
+  // Load all tenants
   const { data: trows } = await supabase
     .from("tenants")
     .select("id, name, features")
@@ -164,31 +156,57 @@ export default async function OwnerDashboard() {
   const tenants: UiTenant[] =
     (trows ?? []).map((t: any) => ({
       id: String(t.id),
-      name: String(t.name ?? "Unnamed"),
+      name: String(t.name ?? "Unnamed tenant"),
       features: (t.features ?? {}) as TenantFeatureFlags,
       memberCount: 0,
     })) || [];
 
   const tenantIds = tenants.map((t) => t.id);
+  if (tenantIds.length === 0) {
+    return (
+      <main className="mx-auto max-w-6xl p-6">
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
+            Platform Owner Dashboard
+          </h1>
+          <p className="text-sm text-[rgb(var(--muted-foreground))]">
+            See all tenants, enabled modules, and manage members &amp; roles.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-6 text-sm text-[rgb(var(--muted-foreground))]">
+          No tenants found. Use the <strong>Add → Add Tenant</strong> menu to create one.
+        </div>
+      </main>
+    );
+  }
 
-  // memberships for those tenants
-  const { data: mrows } = tenantIds.length
-    ? await supabase
-        .from("tenant_memberships")
-        .select("tenant_id, user_id, role")
-        .in("tenant_id", tenantIds)
-    : { data: [] as any[] };
+  // Memberships for all tenants
+  const { data: mrows } = await supabase
+    .from("tenant_memberships")
+    .select("tenant_id, user_id, role")
+    .in("tenant_id", tenantIds);
 
-  // names from profiles (best effort)
-  const userIds = Array.from(new Set((mrows ?? []).map((m) => String(m.user_id))));
+  const membersRaw: any[] = mrows ?? [];
+
+  // Collect all unique user_ids to fetch their names
+  const userIds = Array.from(
+    new Set(membersRaw.map((m) => String(m.user_id)))
+  );
+
   const { data: prow } = userIds.length
-    ? await supabase.from("profiles").select("id, full_name").in("id", userIds)
+    ? await supabase
+        .from("profiles")
+        .select("id, full_name")
+        .in("id", userIds)
     : { data: [] as any[] };
 
-  const nameById = new Map<string, string | null>((prow ?? []).map((p: any) => [String(p.id), p.full_name ?? null]));
+  const nameById = new Map<string, string | null>(
+    (prow ?? []).map((p: any) => [String(p.id), p.full_name ?? null])
+  );
 
   const membersByTenant = new Map<string, UiMember[]>();
-  (mrows ?? []).forEach((m: any) => {
+
+  membersRaw.forEach((m: any) => {
     const tid = String(m.tenant_id);
     const arr = membersByTenant.get(tid) ?? [];
     arr.push({
@@ -200,7 +218,7 @@ export default async function OwnerDashboard() {
     membersByTenant.set(tid, arr);
   });
 
-  // fill counts
+  // Fill member counts
   tenants.forEach((t) => {
     t.memberCount = membersByTenant.get(t.id)?.length ?? 0;
   });
@@ -212,63 +230,70 @@ export default async function OwnerDashboard() {
           Platform Owner Dashboard
         </h1>
         <p className="text-sm text-[rgb(var(--muted-foreground))]">
-          See all tenants, enabled modules, and manage members & roles.
+          See all tenants, enabled modules, and manage members &amp; roles.
         </p>
       </div>
 
-      {tenants.length === 0 ? (
-        <div className="rounded-2xl border p-6">No tenants found.</div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {tenants.map((t) => {
-            const members = membersByTenant.get(t.id) ?? [];
-            const enabled = Object.entries(t.features).filter(([_, v]) => v);
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {tenants.map((t) => {
+          const members = membersByTenant.get(t.id) ?? [];
+          const enabled = Object.entries(t.features).filter(([_, v]) => v);
 
-            return (
-              <div
-                key={t.id}
-                className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
-              >
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">{t.name}</div>
-                    <div className="text-xs text-[rgb(var(--muted-foreground))]">{t.id}</div>
+          return (
+            <div
+              key={t.id}
+              className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
+                    {t.name}
                   </div>
-                  <div className="text-xs rounded-full border border-[rgb(var(--border))] px-2 py-0.5 text-[rgb(var(--muted-foreground))]">
-                    {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+                  <div className="text-xs text-[rgb(var(--muted-foreground))]">
+                    {t.id}
                   </div>
                 </div>
-
-                {/* Module chips */}
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {enabled.length > 0 ? (
-                    enabled.map(([key]) => (
-                      <span
-                        key={key}
-                        className="rounded-full border border-[rgb(var(--accent))]/40 bg-[rgb(var(--muted))]/40 text-[rgb(var(--accent-foreground))]/80 text-xs px-2 py-0.5"
-                      >
-                        {formatModuleName(key)}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-[rgb(var(--muted-foreground))] italic">No modules enabled</span>
-                  )}
+                <div className="rounded-full border border-[rgb(var(--border))] px-2 py-0.5 text-xs text-[rgb(var(--muted-foreground))]">
+                  {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
                 </div>
+              </div>
 
-                {/* Manage */}
-                <details className="group mt-4">
-                  <summary className="list-none cursor-pointer inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]">
-                    Manage <span className="ml-2 transition group-open:rotate-180">▾</span>
-                  </summary>
+              {/* Module chips */}
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {enabled.length > 0 ? (
+                  enabled.map(([key]) => (
+                    <span
+                      key={key}
+                      className="rounded-full border border-[rgb(var(--accent))]/40 bg-[rgb(var(--muted))]/40 px-2 py-0.5 text-xs text-[rgb(var(--accent-foreground))]/80"
+                    >
+                      {formatModuleName(key)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs italic text-[rgb(var(--muted-foreground))]">
+                    No modules enabled
+                  </span>
+                )}
+              </div>
 
-                  <div className="mt-3 space-y-4">
-                    {/* Module toggles */}
-                    <SmartForm action={doUpdateFeatures} className="rounded-xl border border-[rgb(var(--border))] p-3">
-                      <input type="hidden" name="tenant_id" value={t.id} />
-                      <div className="text-sm font-medium mb-2">Modules</div>
-                      <div className="flex flex-wrap gap-3 text-sm">
-                        {(["work_orders", "sampling", "mft", "grants"] as (keyof TenantFeatureFlags)[]).map((k) => (
+              {/* Manage */}
+              <details className="group mt-4">
+                <summary className="inline-flex cursor-pointer list-none items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]">
+                  Manage <span className="ml-2 transition group-open:rotate-180">▾</span>
+                </summary>
+
+                <div className="mt-3 space-y-4">
+                  {/* Module toggles */}
+                  <form
+                    action={doUpdateFeatures}
+                    className="rounded-xl border border-[rgb(var(--border))] p-3"
+                  >
+                    <input type="hidden" name="tenant_id" value={t.id} />
+                    <div className="mb-2 text-sm font-medium">Modules</div>
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      {(["work_orders", "sampling", "mft", "grants"] as (keyof TenantFeatureFlags)[]).map(
+                        (k) => (
                           <label key={String(k)} className="inline-flex items-center gap-2">
                             <input
                               type="checkbox"
@@ -280,64 +305,74 @@ export default async function OwnerDashboard() {
                               {formatModuleName(String(k))}
                             </span>
                           </label>
-                        ))}
-                      </div>
-                      <button
-                        type="submit"
-                        className="mt-3 inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
-                      >
-                        Save Modules
-                      </button>
-                    </SmartForm>
-
-                    {/* Members & roles */}
-                    <div className="rounded-xl border border-[rgb(var(--border))] p-3">
-                      <div className="text-sm font-medium mb-2">Members</div>
-                      {members.length === 0 ? (
-                        <div className="text-xs text-[rgb(var(--muted-foreground))]">No members yet.</div>
-                      ) : (
-                        <ul className="space-y-2">
-                          {members.map((m) => (
-                            <li key={m.user_id} className="flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="text-sm text-[rgb(var(--card-foreground))] truncate">
-                                  {m.full_name || m.user_id}
-                                </div>
-                              </div>
-                              <SmartForm action={doUpdateRole} className="flex items-center gap-2">
-                                <input type="hidden" name="tenant_id" value={t.id} />
-                                <input type="hidden" name="user_id" value={m.user_id} />
-                                <select
-                                  name="role"
-                                  defaultValue={m.role}
-                                  className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-2 py-1 text-sm"
-                                >
-                                  {ROLES.map((r) => (
-                                    <option key={r} value={r}>
-                                      {r}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  type="submit"
-                                  className="rounded-md border border-[rgb(var(--border))] px-2 py-1 text-sm hover:bg-[rgb(var(--muted))]"
-                                  title="Save role"
-                                >
-                                  Save
-                                </button>
-                              </SmartForm>
-                            </li>
-                          ))}
-                        </ul>
+                        )
                       )}
                     </div>
+                    <button
+                      type="submit"
+                      className="mt-3 inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
+                    >
+                      Save Modules
+                    </button>
+                  </form>
+
+                  {/* Members & roles */}
+                  <div className="rounded-xl border border-[rgb(var(--border))] p-3">
+                    <div className="mb-2 text-sm font-medium">Members</div>
+                    {members.length === 0 ? (
+                      <div className="text-xs text-[rgb(var(--muted-foreground))]">
+                        No members yet.
+                      </div>
+                    ) : (
+                      <ul className="space-y-2">
+                        {members.map((m) => (
+                          <li
+                            key={m.user_id}
+                            className="flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm text-[rgb(var(--card-foreground))]">
+                                {m.full_name || m.user_id}
+                              </div>
+                              {m.full_name && (
+                                <div className="text-xs text-[rgb(var(--muted-foreground))]">
+                                  {m.user_id}
+                                </div>
+                              )}
+                            </div>
+                            <form action={doUpdateRole} className="flex items-center gap-2">
+                              <input type="hidden" name="tenant_id" value={t.id} />
+                              <input type="hidden" name="user_id" value={m.user_id} />
+                              <select
+                                name="role"
+                                defaultValue={m.role}
+                                className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-2 py-1 text-sm"
+                              >
+                                {ROLES.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="submit"
+                                className="rounded-md border border-[rgb(var(--border))] px-2 py-1 text-sm hover:bg-[rgb(var(--muted))]"
+                                title="Save role"
+                              >
+                                Save
+                              </button>
+                            </form>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                </details>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                </div>
+              </details>
+            </div>
+          );
+        })}
+      </div>
     </main>
   );
 }
