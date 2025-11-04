@@ -46,7 +46,7 @@ type UiMember = {
   full_name?: string | null;
 };
 
-/* --------- Helpers --------- */
+/* ---------------- Helpers ---------------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -63,8 +63,11 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* --------- Server actions --------- */
+/* ---------------- Server actions ---------------- */
 
+/**
+ * Update module feature flags for a tenant.
+ */
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
@@ -97,12 +100,15 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
 }
 
 /**
- * Update a member's role for a tenant using the normal server client.
- * Assumes RLS on tenant_memberships allows platform owners to update roles.
+ * Update a member's role for a tenant.
+ * Uses:
+ *  - supabase server client for auth + owner check
+ *  - admin client for reading/guarding owners + updating role (bypass RLS)
  */
 async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
+  const admin = getSupabaseAdmin();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const user_id = String(formData.get("user_id") ?? "");
@@ -124,8 +130,8 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  // Guard: cannot demote the last owner of a tenant
-  const { data: mrows } = await supabase
+  // Guard: cannot demote the last owner of a tenant (using admin client)
+  const { data: mrows } = await admin
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
@@ -140,8 +146,8 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     redirect("/owner");
   }
 
-  // Update via normal client; RLS must allow this
-  await supabase
+  // Update role via admin client (bypass RLS)
+  await admin
     .from("tenant_memberships")
     .update({ role })
     .eq("tenant_id", tenant_id)
@@ -242,11 +248,12 @@ async function doAddMember(formData: FormData): Promise<void> {
   redirect("/owner");
 }
 
-/* --------- Page --------- */
+/* ---------------- Page ---------------- */
 
 export default async function OwnerDashboard() {
   const supabase = getSupabaseServer();
 
+  // Auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -259,6 +266,7 @@ export default async function OwnerDashboard() {
 
   if (!profile?.is_platform_owner) redirect("/");
 
+  // Tenants
   const { data: trows } = await supabase
     .from("tenants")
     .select("id, name, features")
@@ -293,6 +301,7 @@ export default async function OwnerDashboard() {
     );
   }
 
+  // Memberships
   const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("tenant_id, user_id, role")
@@ -300,6 +309,7 @@ export default async function OwnerDashboard() {
 
   const membersRaw: any[] = mrows ?? [];
 
+  // Profiles for member names
   const userIds = Array.from(
     new Set(membersRaw.map((m) => String(m.user_id)))
   );
