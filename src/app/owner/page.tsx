@@ -96,9 +96,16 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
   redirect("/owner");
 }
 
+/**
+ * Update a member's role for a tenant.
+ * Uses:
+ *  - server client to authenticate + confirm platform owner
+ *  - admin client to read owners + update membership (bypasses RLS)
+ */
 async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
+  const admin = getSupabaseAdmin();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const user_id = String(formData.get("user_id") ?? "");
@@ -107,6 +114,7 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   if (!tenant_id || !user_id || !role) return;
   if (!ROLES.includes(role)) return;
 
+  // auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -119,7 +127,9 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  const { data: mrows } = await supabase
+  // Guard: cannot demote the last owner of a tenant
+  // Use admin client so RLS can't interfere with the check.
+  const { data: mrows } = await admin
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
@@ -131,10 +141,12 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
+    // silently ignore + bounce back
     redirect("/owner");
   }
 
-  await supabase
+  // Actually update the role via admin client (bypass RLS)
+  await admin
     .from("tenant_memberships")
     .update({ role })
     .eq("tenant_id", tenant_id)
@@ -143,6 +155,10 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   redirect("/owner");
 }
 
+/**
+ * Add member directly from a tenant card.
+ * Uses admin client for invite + membership + profile.
+ */
 async function doAddMember(formData: FormData): Promise<void> {
   "use server";
 
