@@ -1,47 +1,53 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
-export default function SaveButton({
-  label = "Save",
-  formSelector,
-}: {
-  label?: string;
-  formSelector: string; // CSS selector or name attribute of the form
-}) {
-  const [changed, setChanged] = useState(false);
+type Props = {
+  formId: string;
+  label: string;
+  className?: string;
+};
+
+export default function SaveButton({ formId, label, className }: Props) {
+  const [dirty, setDirty] = useState(false);
   const [flashing, setFlashing] = useState(false);
 
   useEffect(() => {
-    const form = document.querySelector<HTMLFormElement>(formSelector);
+    const form = document.getElementById(formId) as HTMLFormElement | null;
     if (!form) return;
 
-    const handleInput = () => setChanged(true);
-    form.addEventListener("input", handleInput);
-    return () => form.removeEventListener("input", handleInput);
-  }, [formSelector]);
+    const handleChange = () => setDirty(true);
+
+    form.addEventListener("input", handleChange);
+    form.addEventListener("change", handleChange);
+
+    return () => {
+      form.removeEventListener("input", handleChange);
+      form.removeEventListener("change", handleChange);
+    };
+  }, [formId]);
 
   const handleClick = () => {
+    // user clicked submit
     setFlashing(true);
-    setChanged(false);
-    setTimeout(() => setFlashing(false), 400);
+    setDirty(false);
+    setTimeout(() => setFlashing(false), 350);
   };
 
   const base =
-    "rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm transition-colors";
-
-  const normal =
+    "inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm transition-colors";
+  const neutral =
     "bg-transparent text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]";
   const active = "bg-blue-500 text-white hover:bg-blue-600";
-  const flash = "bg-green-500 text-white";
+  const success = "bg-green-500 text-white";
+
+  const stateClass = flashing ? success : dirty ? active : neutral;
 
   return (
     <button
       type="submit"
       onClick={handleClick}
-      className={`${base} ${
-        flashing ? flash : changed ? active : normal
-      }`}
+      className={`${base} ${stateClass} ${className ?? ""}`}
     >
       {label}
     </button>
