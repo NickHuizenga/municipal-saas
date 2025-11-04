@@ -18,16 +18,14 @@ async function doInvite(formData: FormData) {
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const role = String(formData.get("role") ?? "viewer") as Role;
 
-  if (!email || !tenant_id) {
-    return;
-  }
+  if (!email || !tenant_id) return;
 
   // 1) Auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // 2) Permissions: platform owner OR owner of that tenant
+  // 2) Permission: platform owner OR owner of that tenant
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -49,34 +47,37 @@ async function doInvite(formData: FormData) {
     allowed = membership?.role === "owner";
   }
 
-  if (!allowed) {
-    redirect("/"); // not allowed to invite
-  }
+  if (!allowed) redirect("/");
 
-  // 3) Invite the user via admin API
-  //    (Emails will only actually send if SMTP is configured in Supabase)
+  // 3) Invite user via Admin API
   const { data: inviteData, error: inviteErr } =
     await admin.auth.admin.inviteUserByEmail(email);
 
-  if (inviteErr || !inviteData?.user) {
-    console.error("Invite error", inviteErr);
+  // Supabase returns the user in inviteData.user for new invites.
+  // If user already exists, inviteErr may be non-null but we still want membership.
+  const invitedUserId = inviteData?.user?.id;
+
+  if (!invitedUserId) {
+    console.error("Invite error or missing user from invite:", inviteErr);
     redirect("/owner");
   }
 
-  const invitedUserId = inviteData.user.id;
-
-  // 4) Assign membership using ADMIN client so RLS can't block it
+  // 4) Assign membership via ADMIN client (bypasses RLS)
+  //    Use upsert so repeating an invite for same tenant/user doesn't blow up.
   const { error: memberErr } = await admin
     .from("tenant_memberships")
-    .insert({
-      tenant_id,
-      user_id: invitedUserId,
-      role,
-    });
+    .upsert(
+      {
+        tenant_id,
+        user_id: invitedUserId,
+        role,
+      },
+      { onConflict: "tenant_id,user_id" }
+    );
 
   if (memberErr) {
-    console.error("Membership insert error", memberErr);
-    // still redirect, but now you have logs
+    console.error("Membership upsert error", memberErr);
+    // still redirect so UI stays normal, but you'll have server logs
   }
 
   // 5) Back to owner dashboard
@@ -89,13 +90,11 @@ export default async function InvitePage({
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   const supabase = getSupabaseServer();
-
-  // 1) Auth check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // 2) Are we a platform owner?
+  // Are we a platform owner?
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -104,9 +103,7 @@ export default async function InvitePage({
 
   const isPlatformOwner = !!profile?.is_platform_owner;
 
-  // 3) Tenants this user can invite into:
-  //    - platform owner: all tenants
-  //    - tenant owner: only tenants where they are owner
+  // Collect tenants we can invite into
   let tenants: { id: string; name: string }[] = [];
 
   if (isPlatformOwner) {
@@ -137,9 +134,10 @@ export default async function InvitePage({
       }) || [];
   }
 
-  // Preselect tenant_id from query string if provided (e.g. Add -> Add User for current tenant)
+  // Preselect tenant from query params if present
   const preselect =
-    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) || "";
+    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) ||
+    "";
 
   return (
     <main className="mx-auto max-w-xl p-6">
