@@ -1,62 +1,52 @@
 // src/app/owner/add-tenant/page.tsx
-import { getSupabaseServer } from "@/lib/supabaseServer";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { redirect } from "next/navigation";
+import { getSupabaseServer } from "@/lib/supabaseServer";
+import SaveButton from "@/components/SaveButton";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Server action: create tenant + make current user owner (via service role)
-async function createTenant(formData: FormData) {
+async function doCreateTenant(formData: FormData) {
   "use server";
 
   const supabase = getSupabaseServer();
-  const admin = getSupabaseAdmin();
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;
 
-  // 1) Auth & platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  const { data: prof } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!prof?.is_platform_owner) redirect("/");
+  if (!profile?.is_platform_owner) redirect("/");
 
-  // 2) Create tenant (RLS allows platform owner to insert)
-  const { data: t, error: terr } = await supabase
+  const { data: tenant, error } = await supabase
     .from("tenants")
-    .insert({ name }) // id + slug are generated in DB
+    .insert({ name })
     .select("id")
     .maybeSingle();
 
-  if (terr || !t?.id) {
-    console.error("createTenant: tenant insert failed", terr);
+  if (!tenant || error) {
+    console.error("add-tenant error:", error);
     redirect("/owner");
   }
 
-  // 3) Make current user an owner of this tenant
-  //    Use service-role client so RLS cannot block it.
-  const { error: merr } = await admin
-    .from("tenant_memberships")
-    .insert({
-      tenant_id: t.id,
+  // make current user owner of this tenant
+  await supabase.from("tenant_memberships").upsert(
+    {
+      tenant_id: tenant.id,
       user_id: user.id,
       role: "owner",
-    });
+    },
+    { onConflict: "tenant_id,user_id" }
+  );
 
-  if (merr) {
-    console.error("createTenant: membership insert failed", merr);
-    // We still redirect, but now you'll see the error in server logs.
-  }
-
-  // 4) Back to owner dashboard
   redirect("/owner");
 }
 
@@ -67,13 +57,13 @@ export default async function AddTenantPage() {
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  const { data: prof } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!prof?.is_platform_owner) redirect("/");
+  if (!profile?.is_platform_owner) redirect("/");
 
   return (
     <main className="mx-auto max-w-xl p-6">
@@ -84,24 +74,21 @@ export default async function AddTenantPage() {
         Create a new municipality and assign yourself as its owner.
       </p>
 
-      {/* Plain form so Next.js can follow the redirect from the server action */}
       <form
-        action={createTenant}
+        id="add-tenant-form"
+        action={doCreateTenant}
         className="rounded-2xl border border-[rgb(var(--border))] p-4"
       >
         <label className="mb-1 block text-sm">Tenant name</label>
         <input
           name="name"
+          type="text"
           required
           placeholder="Village of Example, IL"
-          className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
+          className="mb-4 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
         />
-        <button
-          type="submit"
-          className="mt-3 inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
-        >
-          Create Tenant
-        </button>
+
+        <SaveButton label="Create Tenant" formId="add-tenant-form" />
       </form>
     </main>
   );
