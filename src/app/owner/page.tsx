@@ -67,6 +67,7 @@ function formatModuleName(key: string): string {
 
 /**
  * Update module feature flags for a tenant.
+ * Does NOT redirect – page stays put, DB is updated.
  */
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
@@ -84,7 +85,10 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
 
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
-  if (!user) redirect("/login");
+  if (!user) {
+    redirect("/login");
+    return;
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -92,11 +96,14 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile?.is_platform_owner) redirect("/");
+  if (!profile?.is_platform_owner) {
+    redirect("/");
+    return;
+  }
 
   await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
 
-  redirect("/owner");
+  // No redirect here: DB is updated, UI stays as-is until you reload manually.
 }
 
 /**
@@ -104,6 +111,7 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
  * Uses:
  *  - supabase server client for auth + owner check
  *  - admin client for reading/guarding owners + updating role (bypass RLS)
+ * No redirect – silent DB update.
  */
 async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
@@ -120,7 +128,10 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   // auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
-  if (!user) redirect("/login");
+  if (!user) {
+    redirect("/login");
+    return;
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -128,7 +139,10 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile?.is_platform_owner) redirect("/");
+  if (!profile?.is_platform_owner) {
+    redirect("/");
+    return;
+  }
 
   // Guard: cannot demote the last owner of a tenant (using admin client)
   const { data: mrows } = await admin
@@ -143,7 +157,8 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    redirect("/owner");
+    // silently ignore – don't break last owner
+    return;
   }
 
   // Update role via admin client (bypass RLS)
@@ -153,12 +168,13 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  redirect("/owner");
+  // No redirect; DB is updated silently.
 }
 
 /**
  * Add member directly from a tenant card.
  * Uses admin client for invite + membership + profile.
+ * No redirect – silent DB update.
  */
 async function doAddMember(formData: FormData): Promise<void> {
   "use server";
@@ -175,7 +191,10 @@ async function doAddMember(formData: FormData): Promise<void> {
 
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
-  if (!user) redirect("/login");
+  if (!user) {
+    redirect("/login");
+    return;
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -183,7 +202,10 @@ async function doAddMember(formData: FormData): Promise<void> {
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile?.is_platform_owner) redirect("/");
+  if (!profile?.is_platform_owner) {
+    redirect("/");
+    return;
+  }
 
   let invitedUserId: string | null = null;
 
@@ -220,7 +242,7 @@ async function doAddMember(formData: FormData): Promise<void> {
 
   if (!invitedUserId) {
     console.error("doAddMember: could not resolve user for email", email, inviteErr);
-    redirect("/owner");
+    return;
   }
 
   await admin
@@ -245,7 +267,7 @@ async function doAddMember(formData: FormData): Promise<void> {
     );
   }
 
-  redirect("/owner");
+  // No redirect; DB updated silently.
 }
 
 /* ---------------- Page ---------------- */
