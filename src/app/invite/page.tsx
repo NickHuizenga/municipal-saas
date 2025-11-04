@@ -10,9 +10,8 @@ type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer"
 
 /**
  * Server action: invite a user by email and attach them to a tenant with a role.
- * Uses:
- * - server client for auth + permission checks
- * - admin client for invite + membership upsert (bypasses RLS)
+ * - Uses server client for auth + permission checks
+ * - Uses admin client for invite + membership upsert (bypasses RLS)
  */
 async function doInvite(formData: FormData) {
   "use server";
@@ -57,45 +56,49 @@ async function doInvite(formData: FormData) {
   }
 
   // 3) Resolve/create the auth user for this email
+  let invitedUserId: string | null = null;
 
-  // First: try to find an existing user by email (e.g., already invited/created)
-  let invitedUserId: string | undefined;
+  // Try inviting the user
+  const { data: inviteData, error: inviteErr } =
+    await (admin as any).auth.admin.inviteUserByEmail(email);
 
-  try {
-    const existing = await admin.auth.admin.getUserByEmail(email);
-    const existingUser: any = (existing as any)?.data ?? (existing as any);
-    const existingUserObj = (existingUser as any)?.user ?? existingUser;
-
-    if (existingUserObj?.id) {
-      invitedUserId = existingUserObj.id;
-    }
-  } catch (e) {
-    console.error("getUserByEmail error (safe to ignore if user doesn't exist):", e);
-  }
-
-  // If no existing user, send an invite
-  if (!invitedUserId) {
-    const { data: inviteData, error: inviteErr } =
-      await admin.auth.admin.inviteUserByEmail(email);
-
-    if (inviteErr) {
-      console.error("Invite error:", inviteErr);
-      redirect("/owner");
-    }
-
-    // Supabase SDK versions differ: sometimes data is the user, sometimes { user }
+  if (!inviteErr && inviteData) {
+    // Different supabase-js versions return either { user } or User directly
     const raw = inviteData as any;
     const userObj = raw?.user ?? raw;
-    if (!userObj?.id) {
-      console.error("Invite returned no user object:", inviteData);
-      redirect("/owner");
+    if (userObj?.id) {
+      invitedUserId = userObj.id as string;
     }
+  }
 
-    invitedUserId = userObj.id;
+  // If we didn't get a user id from invite (e.g., user already exists),
+  // fall back to listing users and matching by email.
+  if (!invitedUserId && inviteErr) {
+    try {
+      const listRes = await (admin as any).auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+
+      const users: any[] =
+        (listRes as any)?.data?.users ?? (listRes as any)?.users ?? [];
+
+      const match = users.find(
+        (u) =>
+          typeof u.email === "string" &&
+          u.email.toLowerCase() === email.toLowerCase()
+      );
+
+      if (match?.id) {
+        invitedUserId = match.id as string;
+      }
+    } catch (e) {
+      console.error("listUsers fallback error:", e);
+    }
   }
 
   if (!invitedUserId) {
-    console.error("Could not resolve invitedUserId for email:", email);
+    console.error("Could not resolve invitedUserId for email:", email, "inviteErr:", inviteErr);
     redirect("/owner");
   }
 
@@ -174,7 +177,8 @@ export default async function InvitePage({
 
   // Preselect tenant from query params if present
   const preselect =
-    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) || "";
+    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) ||
+    "";
 
   return (
     <main className="mx-auto max-w-xl p-6">
