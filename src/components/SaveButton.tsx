@@ -33,9 +33,6 @@ export default function SaveButton({ formId, label, className }: Props) {
     setFlashing(true);
     setDirty(false);
     setTimeout(() => setFlashing(false), 350);
-    // IMPORTANT: no window.location.reload() here
-    // The server action will redirect (e.g. redirect("/owner")),
-    // which already triggers a fresh render.
   };
 
   const base =
