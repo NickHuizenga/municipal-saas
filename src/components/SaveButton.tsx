@@ -29,17 +29,13 @@ export default function SaveButton({ formId, label, className }: Props) {
   }, [formId]);
 
   const handleClick = () => {
-    // Visual feedback
+    // Visual feedback only — let the form submit normally
     setFlashing(true);
     setDirty(false);
     setTimeout(() => setFlashing(false), 350);
-
-    // Force a full page refresh shortly after submit is triggered
-    if (typeof window !== "undefined") {
-      setTimeout(() => {
-        window.location.reload();
-      }, 400);
-    }
+    // IMPORTANT: no window.location.reload() here
+    // The server action will redirect (e.g. redirect("/owner")),
+    // which already triggers a fresh render.
   };
 
   const base =
