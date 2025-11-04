@@ -1,10 +1,8 @@
 // src/app/owner/page.tsx
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import SaveButton from "@/components/SaveButton";
-import RefreshOnCookie from "@/components/RefreshOnCookie";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -70,7 +68,6 @@ function formatModuleName(key: string): string {
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
-  const cookieStore = cookies();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   if (!tenant_id) return;
@@ -96,24 +93,16 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
 
   await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
 
-  // Signal the client to reload
-  cookieStore.set("owner_refresh", "1", { path: "/" });
-
-  // Also navigate back to /owner (for safety / consistency)
   redirect("/owner");
 }
 
 /**
- * Update a member's role for a tenant.
- * Uses:
- *  - server client to authenticate + confirm platform owner
- *  - admin client to read owners + update membership (bypasses RLS)
+ * Update a member's role for a tenant using the normal server client.
+ * Assumes RLS on tenant_memberships allows platform owners to update roles.
  */
 async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
-  const admin = getSupabaseAdmin();
-  const cookieStore = cookies();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const user_id = String(formData.get("user_id") ?? "");
@@ -136,7 +125,7 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   if (!profile?.is_platform_owner) redirect("/");
 
   // Guard: cannot demote the last owner of a tenant
-  const { data: mrows } = await admin
+  const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
@@ -148,18 +137,16 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    cookieStore.set("owner_refresh", "1", { path: "/" });
     redirect("/owner");
   }
 
-  // Actually update the role via admin client (bypass RLS)
-  await admin
+  // Update via normal client; RLS must allow this
+  await supabase
     .from("tenant_memberships")
     .update({ role })
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  cookieStore.set("owner_refresh", "1", { path: "/" });
   redirect("/owner");
 }
 
@@ -172,7 +159,6 @@ async function doAddMember(formData: FormData): Promise<void> {
 
   const supabase = getSupabaseServer();
   const admin = getSupabaseAdmin();
-  const cookieStore = cookies();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -228,7 +214,6 @@ async function doAddMember(formData: FormData): Promise<void> {
 
   if (!invitedUserId) {
     console.error("doAddMember: could not resolve user for email", email, inviteErr);
-    cookieStore.set("owner_refresh", "1", { path: "/" });
     redirect("/owner");
   }
 
@@ -254,7 +239,6 @@ async function doAddMember(formData: FormData): Promise<void> {
     );
   }
 
-  cookieStore.set("owner_refresh", "1", { path: "/" });
   redirect("/owner");
 }
 
@@ -293,7 +277,6 @@ export default async function OwnerDashboard() {
   if (tenantIds.length === 0) {
     return (
       <main className="mx-auto max-w-6xl p-6">
-        <RefreshOnCookie cookieName="owner_refresh" />
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
             Platform Owner Dashboard
@@ -348,8 +331,6 @@ export default async function OwnerDashboard() {
 
   return (
     <main className="mx-auto max-w-6xl p-6">
-      <RefreshOnCookie cookieName="owner_refresh" />
-
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
           Platform Owner Dashboard
