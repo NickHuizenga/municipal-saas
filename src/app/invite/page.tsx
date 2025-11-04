@@ -1,5 +1,6 @@
 // src/app/invite/page.tsx
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import SaveButton from "@/components/SaveButton";
@@ -20,6 +21,7 @@ async function doInvite(formData: FormData) {
 
   const supabase = getSupabaseServer();
   const admin = getSupabaseAdmin();
+  const cookieStore = cookies();
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const full_name = String(formData.get("full_name") ?? "").trim();
@@ -89,6 +91,7 @@ async function doInvite(formData: FormData) {
 
   if (!invitedUserId) {
     console.error("Could not resolve invitedUserId for email:", email, inviteErr);
+    cookieStore.set("owner_refresh", "1", { path: "/" });
     redirect("/owner");
   }
 
@@ -114,6 +117,7 @@ async function doInvite(formData: FormData) {
     );
   }
 
+  cookieStore.set("owner_refresh", "1", { path: "/" });
   redirect("/owner");
 }
 
