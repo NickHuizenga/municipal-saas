@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import SaveButton from "@/components/SaveButton";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -45,7 +46,7 @@ type UiMember = {
   full_name?: string | null;
 };
 
-/* -------------------- Helpers -------------------- */
+/* --------- Helpers --------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -62,7 +63,7 @@ function formatModuleName(key: string): string {
   }
 }
 
-/* -------------------- Server Actions -------------------- */
+/* --------- Server actions --------- */
 
 async function doUpdateFeatures(formData: FormData): Promise<void> {
   "use server";
@@ -118,7 +119,6 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  // Guard: cannot demote the last owner of a tenant
   const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
@@ -143,10 +143,6 @@ async function doUpdateRole(formData: FormData): Promise<void> {
   redirect("/owner");
 }
 
-/**
- * Add member directly from a tenant card.
- * - Uses admin client to invite/create user and upsert membership + profile.
- */
 async function doAddMember(formData: FormData): Promise<void> {
   "use server";
 
@@ -156,11 +152,10 @@ async function doAddMember(formData: FormData): Promise<void> {
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const full_name = String(formData.get("full_name") ?? "").trim();
-  const role: Role = "viewer"; // default role for inline add
+  const role: Role = "viewer";
 
   if (!tenant_id || !email) return;
 
-  // Auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -173,7 +168,6 @@ async function doAddMember(formData: FormData): Promise<void> {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  // Create/resolve auth user via admin client
   let invitedUserId: string | null = null;
 
   const { data: inviteData, error: inviteErr } =
@@ -185,7 +179,6 @@ async function doAddMember(formData: FormData): Promise<void> {
     if (userObj?.id) invitedUserId = userObj.id;
   }
 
-  // Fallback: user may already exist -> search via listUsers
   if (!invitedUserId && inviteErr) {
     try {
       const listRes = await (admin as any).auth.admin.listUsers({
@@ -213,7 +206,6 @@ async function doAddMember(formData: FormData): Promise<void> {
     redirect("/owner");
   }
 
-  // Upsert membership for this tenant
   await admin
     .from("tenant_memberships")
     .upsert(
@@ -225,7 +217,6 @@ async function doAddMember(formData: FormData): Promise<void> {
       { onConflict: "tenant_id,user_id" }
     );
 
-  // Upsert profile with full name
   if (full_name) {
     await admin.from("profiles").upsert(
       {
@@ -240,12 +231,11 @@ async function doAddMember(formData: FormData): Promise<void> {
   redirect("/owner");
 }
 
-/* -------------------- Page -------------------- */
+/* --------- Page --------- */
 
 export default async function OwnerDashboard() {
   const supabase = getSupabaseServer();
 
-  // Auth + platform owner check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
@@ -258,7 +248,6 @@ export default async function OwnerDashboard() {
 
   if (!profile?.is_platform_owner) redirect("/");
 
-  // Load all tenants
   const { data: trows } = await supabase
     .from("tenants")
     .select("id, name, features")
@@ -293,7 +282,6 @@ export default async function OwnerDashboard() {
     );
   }
 
-  // Memberships across all tenants
   const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("tenant_id, user_id, role")
@@ -301,16 +289,12 @@ export default async function OwnerDashboard() {
 
   const membersRaw: any[] = mrows ?? [];
 
-  // Collect unique user_ids and fetch their profiles
   const userIds = Array.from(
     new Set(membersRaw.map((m) => String(m.user_id)))
   );
 
   const { data: prow } = userIds.length
-    ? await supabase
-        .from("profiles")
-        .select("id, full_name")
-        .in("id", userIds)
+    ? await supabase.from("profiles").select("id, full_name").in("id", userIds)
     : { data: [] as any[] };
 
   const nameById = new Map<string, string | null>(
@@ -388,16 +372,19 @@ export default async function OwnerDashboard() {
                 )}
               </div>
 
-              {/* Manage section */}
+              {/* Manage */}
               <details className="group mt-4">
                 <summary className="inline-flex cursor-pointer list-none items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]">
                   Manage{" "}
-                  <span className="ml-2 transition group-open:rotate-180">▾</span>
+                  <span className="ml-2 transition group-open:rotate-180">
+                    ▾
+                  </span>
                 </summary>
 
                 <div className="mt-3 space-y-4">
                   {/* Module toggles */}
                   <form
+                    id={`modules-${t.id}`}
                     action={doUpdateFeatures}
                     className="rounded-xl border border-[rgb(var(--border))] p-3"
                   >
@@ -428,12 +415,12 @@ export default async function OwnerDashboard() {
                         </label>
                       ))}
                     </div>
-                    <button
-                      type="submit"
-                      className="mt-3 inline-flex items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))]"
-                    >
-                      Save Modules
-                    </button>
+                    <div className="mt-3">
+                      <SaveButton
+                        label="Save Modules"
+                        formId={`modules-${t.id}`}
+                      />
+                    </div>
                   </form>
 
                   {/* Members & Add Member */}
@@ -441,7 +428,7 @@ export default async function OwnerDashboard() {
                     <div className="mb-2 flex items-center justify-between">
                       <div className="text-sm font-medium">Members</div>
 
-                      {/* Add Member toggle */}
+                      {/* Add Member dropdown */}
                       <details className="group relative">
                         <summary className="inline-flex cursor-pointer list-none items-center rounded-md border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]">
                           Add Member
@@ -450,16 +437,18 @@ export default async function OwnerDashboard() {
                           </span>
                         </summary>
                         <div className="mt-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-3 text-xs">
-                          <form action={doAddMember} className="space-y-2">
+                          <form
+                            id={`add-member-${t.id}`}
+                            action={doAddMember}
+                            className="space-y-2"
+                          >
                             <input
                               type="hidden"
                               name="tenant_id"
                               value={t.id}
                             />
                             <div>
-                              <label className="mb-1 block">
-                                Full Name
-                              </label>
+                              <label className="mb-1 block">Full Name</label>
                               <input
                                 name="full_name"
                                 required
@@ -468,9 +457,7 @@ export default async function OwnerDashboard() {
                               />
                             </div>
                             <div>
-                              <label className="mb-1 block">
-                                Email
-                              </label>
+                              <label className="mb-1 block">Email</label>
                               <input
                                 name="email"
                                 type="email"
@@ -479,12 +466,11 @@ export default async function OwnerDashboard() {
                                 className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs"
                               />
                             </div>
-                            <button
-                              type="submit"
-                              className="mt-1 inline-flex items-center rounded-md border border-[rgb(var(--border))] px-2 py-1 text-xs hover:bg-[rgb(var(--muted))]"
-                            >
-                              Add
-                            </button>
+                            <SaveButton
+                              label="Add"
+                              formId={`add-member-${t.id}`}
+                              className="mt-1 px-2 py-1 text-xs"
+                            />
                           </form>
                         </div>
                       </details>
@@ -512,6 +498,7 @@ export default async function OwnerDashboard() {
                               )}
                             </div>
                             <form
+                              id={`member-role-${t.id}-${m.user_id}`}
                               action={doUpdateRole}
                               className="flex items-center gap-2"
                             >
@@ -536,12 +523,11 @@ export default async function OwnerDashboard() {
                                   </option>
                                 ))}
                               </select>
-                              <button
-                                type="submit"
-                                className="rounded-md border border-[rgb(var(--border))] px-2 py-1 text-sm hover:bg-[rgb(var(--muted))]"
-                              >
-                                Save
-                              </button>
+                              <SaveButton
+                                label="Save"
+                                formId={`member-role-${t.id}-${m.user_id}`}
+                                className="px-2 py-1 text-sm"
+                              />
                             </form>
                           </li>
                         ))}
