@@ -29,7 +29,7 @@ export default function SaveButton({ formId, label, className }: Props) {
   }, [formId]);
 
   const handleClick = () => {
-    // Visual feedback only — let the form submit normally
+    // Visual feedback only — let the form submit normally to the server action
     setFlashing(true);
     setDirty(false);
     setTimeout(() => setFlashing(false), 350);
