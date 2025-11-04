@@ -101,22 +101,26 @@ async function doUpdateFeatures(formData: FormData): Promise<void> {
     return;
   }
 
-  await supabase.from("tenants").update({ features: flags }).eq("id", tenant_id);
+  const { error } = await supabase
+    .from("tenants")
+    .update({ features: flags })
+    .eq("id", tenant_id);
 
-  // No redirect here: DB is updated, UI stays as-is until you reload manually.
+  if (error) {
+    console.error("doUpdateFeatures error:", error);
+  }
+  // No redirect: DB is updated, UI stays as-is until manual reload.
 }
 
 /**
  * Update a member's role for a tenant.
- * Uses:
- *  - supabase server client for auth + owner check
- *  - admin client for reading/guarding owners + updating role (bypass RLS)
+ * Uses ONLY the normal server client, like module updates.
+ * RLS must allow platform owners to update tenant_memberships.
  * No redirect – silent DB update.
  */
 async function doUpdateRole(formData: FormData): Promise<void> {
   "use server";
   const supabase = getSupabaseServer();
-  const admin = getSupabaseAdmin();
 
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const user_id = String(formData.get("user_id") ?? "");
@@ -144,11 +148,16 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     return;
   }
 
-  // Guard: cannot demote the last owner of a tenant (using admin client)
-  const { data: mrows } = await admin
+  // Guard: cannot demote the last owner of a tenant
+  const { data: mrows, error: mErr } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenant_id);
+
+  if (mErr) {
+    console.error("doUpdateRole membership fetch error:", mErr);
+    return;
+  }
 
   const ownerIds =
     (mrows ?? [])
@@ -161,14 +170,16 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     return;
   }
 
-  // Update role via admin client (bypass RLS)
-  await admin
+  const { error } = await supabase
     .from("tenant_memberships")
     .update({ role })
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
 
-  // No redirect; DB is updated silently.
+  if (error) {
+    console.error("doUpdateRole update error:", error);
+  }
+  // No redirect; DB is updated silently (if RLS allows).
 }
 
 /**
@@ -245,7 +256,7 @@ async function doAddMember(formData: FormData): Promise<void> {
     return;
   }
 
-  await admin
+  const { error: upsertErr } = await admin
     .from("tenant_memberships")
     .upsert(
       {
@@ -256,8 +267,12 @@ async function doAddMember(formData: FormData): Promise<void> {
       { onConflict: "tenant_id,user_id" }
     );
 
+  if (upsertErr) {
+    console.error("doAddMember membership upsert error:", upsertErr);
+  }
+
   if (full_name) {
-    await admin.from("profiles").upsert(
+    const { error: profileErr } = await admin.from("profiles").upsert(
       {
         id: invitedUserId,
         full_name,
@@ -265,6 +280,9 @@ async function doAddMember(formData: FormData): Promise<void> {
       },
       { onConflict: "id" }
     );
+    if (profileErr) {
+      console.error("doAddMember profile upsert error:", profileErr);
+    }
   }
 
   // No redirect; DB updated silently.
@@ -468,7 +486,7 @@ export default async function OwnerDashboard() {
 
                   {/* Members & Add Member */}
                   <div className="rounded-xl border border-[rgb(var(--border))] p-3">
-                    <div className="mb-2 flex items-center justify-between">
+                    <div className="mb-2 flex items-center justify_between">
                       <div className="text-sm font-medium">Members</div>
 
                       {/* Add Member dropdown */}
