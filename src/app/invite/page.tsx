@@ -8,11 +8,6 @@ export const revalidate = 0;
 
 type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
 
-/**
- * Server action: invite a user by email and attach them to a tenant with a role.
- * - Uses server client for auth + permission checks
- * - Uses admin client for invite + membership upsert (bypasses RLS)
- */
 async function doInvite(formData: FormData) {
   "use server";
 
@@ -20,17 +15,18 @@ async function doInvite(formData: FormData) {
   const admin = getSupabaseAdmin();
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const full_name = String(formData.get("full_name") ?? "").trim();
   const tenant_id = String(formData.get("tenant_id") ?? "");
   const role = String(formData.get("role") ?? "viewer") as Role;
 
   if (!email || !tenant_id) return;
 
-  // 1) Auth
+  // 1️⃣ Auth check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // 2) Permissions: platform owner OR owner of that tenant
+  // 2️⃣ Permission check: must be platform owner or tenant owner
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -51,28 +47,20 @@ async function doInvite(formData: FormData) {
     allowed = membership?.role === "owner";
   }
 
-  if (!allowed) {
-    redirect("/");
-  }
+  if (!allowed) redirect("/");
 
-  // 3) Resolve/create the auth user for this email
+  // 3️⃣ Invite user
   let invitedUserId: string | null = null;
-
-  // Try inviting the user
   const { data: inviteData, error: inviteErr } =
     await (admin as any).auth.admin.inviteUserByEmail(email);
 
   if (!inviteErr && inviteData) {
-    // Different supabase-js versions return either { user } or User directly
     const raw = inviteData as any;
     const userObj = raw?.user ?? raw;
-    if (userObj?.id) {
-      invitedUserId = userObj.id as string;
-    }
+    if (userObj?.id) invitedUserId = userObj.id;
   }
 
-  // If we didn't get a user id from invite (e.g., user already exists),
-  // fall back to listing users and matching by email.
+  // 4️⃣ Fallback: listUsers if invite returned null
   if (!invitedUserId && inviteErr) {
     try {
       const listRes = await (admin as any).auth.admin.listUsers({
@@ -89,21 +77,19 @@ async function doInvite(formData: FormData) {
           u.email.toLowerCase() === email.toLowerCase()
       );
 
-      if (match?.id) {
-        invitedUserId = match.id as string;
-      }
+      if (match?.id) invitedUserId = match.id as string;
     } catch (e) {
       console.error("listUsers fallback error:", e);
     }
   }
 
   if (!invitedUserId) {
-    console.error("Could not resolve invitedUserId for email:", email, "inviteErr:", inviteErr);
+    console.error("❌ Could not resolve invitedUserId for email:", email, inviteErr);
     redirect("/owner");
   }
 
-  // 4) Upsert membership via ADMIN client (bypasses RLS)
-  const { error: memberErr } = await admin
+  // 5️⃣ Upsert membership (admin bypasses RLS)
+  await admin
     .from("tenant_memberships")
     .upsert(
       {
@@ -114,12 +100,19 @@ async function doInvite(formData: FormData) {
       { onConflict: "tenant_id,user_id" }
     );
 
-  if (memberErr) {
-    console.error("Membership upsert error:", memberErr);
-    // We still redirect so UX continues, but now you have logs in Vercel/Supabase
+  // 6️⃣ Upsert profile with provided name
+  if (full_name) {
+    await admin.from("profiles").upsert(
+      {
+        id: invitedUserId,
+        full_name,
+        is_platform_owner: false,
+      },
+      { onConflict: "id" }
+    );
   }
 
-  // 5) Back to owner dashboard
+  // 7️⃣ Redirect back
   redirect("/owner");
 }
 
@@ -130,12 +123,10 @@ export default async function InvitePage({
 }) {
   const supabase = getSupabaseServer();
 
-  // 1) Auth check
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
   if (!user) redirect("/login");
 
-  // 2) Are we a platform owner?
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -144,7 +135,6 @@ export default async function InvitePage({
 
   const isPlatformOwner = !!profile?.is_platform_owner;
 
-  // 3) Tenants this user can invite into:
   let tenants: { id: string; name: string }[] = [];
 
   if (isPlatformOwner) {
@@ -175,7 +165,6 @@ export default async function InvitePage({
       }) || [];
   }
 
-  // Preselect tenant from query params if present
   const preselect =
     (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) ||
     "";
@@ -186,14 +175,23 @@ export default async function InvitePage({
         Invite User
       </h1>
       <p className="mb-4 text-sm text-[rgb(var(--muted-foreground))]">
-        Invite a user and assign them to a tenant. Selecting a tenant is
-        required.
+        Invite a user, assign them to a tenant, and set their role.
       </p>
 
       <form
         action={doInvite}
         className="rounded-2xl border border-[rgb(var(--border))] p-4"
       >
+        {/* Full Name */}
+        <label className="mb-1 block text-sm">Full Name</label>
+        <input
+          name="full_name"
+          type="text"
+          placeholder="Jane Doe"
+          required
+          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
+        />
+
         {/* Email */}
         <label className="mb-1 block text-sm">Email</label>
         <input
