@@ -1,12 +1,27 @@
 // src/app/owner/page.tsx
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
-const ROLES: Role[] = ["owner", "admin", "dispatcher", "crew_leader", "crew", "viewer"];
+type Role =
+  | "owner"
+  | "admin"
+  | "dispatcher"
+  | "crew_leader"
+  | "crew"
+  | "viewer";
+
+const ROLES: Role[] = [
+  "owner",
+  "admin",
+  "dispatcher",
+  "crew_leader",
+  "crew",
+  "viewer",
+];
 
 type TenantFeatureFlags = {
   work_orders?: boolean;
@@ -30,7 +45,7 @@ type UiMember = {
   full_name?: string | null;
 };
 
-/* -------------------- Helper -------------------- */
+/* -------------------- Helpers -------------------- */
 
 function formatModuleName(key: string): string {
   switch (key) {
@@ -116,7 +131,6 @@ async function doUpdateRole(formData: FormData): Promise<void> {
 
   const isTargetOwner = ownerIds.includes(user_id);
   if (isTargetOwner && role !== "owner" && ownerIds.length <= 1) {
-    // Prevent demoting last owner; just go back
     redirect("/owner");
   }
 
@@ -125,6 +139,103 @@ async function doUpdateRole(formData: FormData): Promise<void> {
     .update({ role })
     .eq("tenant_id", tenant_id)
     .eq("user_id", user_id);
+
+  redirect("/owner");
+}
+
+/**
+ * Add member directly from a tenant card.
+ * - Uses admin client to invite/create user and upsert membership + profile.
+ */
+async function doAddMember(formData: FormData): Promise<void> {
+  "use server";
+
+  const supabase = getSupabaseServer();
+  const admin = getSupabaseAdmin();
+
+  const tenant_id = String(formData.get("tenant_id") ?? "");
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const full_name = String(formData.get("full_name") ?? "").trim();
+  const role: Role = "viewer"; // default role for inline add
+
+  if (!tenant_id || !email) return;
+
+  // Auth + platform owner check
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth?.user;
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profile?.is_platform_owner) redirect("/");
+
+  // Create/resolve auth user via admin client
+  let invitedUserId: string | null = null;
+
+  const { data: inviteData, error: inviteErr } =
+    await (admin as any).auth.admin.inviteUserByEmail(email);
+
+  if (!inviteErr && inviteData) {
+    const raw = inviteData as any;
+    const userObj = raw?.user ?? raw;
+    if (userObj?.id) invitedUserId = userObj.id;
+  }
+
+  // Fallback: user may already exist -> search via listUsers
+  if (!invitedUserId && inviteErr) {
+    try {
+      const listRes = await (admin as any).auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+
+      const users: any[] =
+        (listRes as any)?.data?.users ?? (listRes as any)?.users ?? [];
+
+      const match = users.find(
+        (u) =>
+          typeof u.email === "string" &&
+          u.email.toLowerCase() === email.toLowerCase()
+      );
+
+      if (match?.id) invitedUserId = match.id as string;
+    } catch (e) {
+      console.error("doAddMember listUsers fallback error:", e);
+    }
+  }
+
+  if (!invitedUserId) {
+    console.error("doAddMember: could not resolve user for email", email, inviteErr);
+    redirect("/owner");
+  }
+
+  // Upsert membership for this tenant
+  await admin
+    .from("tenant_memberships")
+    .upsert(
+      {
+        tenant_id,
+        user_id: invitedUserId,
+        role,
+      },
+      { onConflict: "tenant_id,user_id" }
+    );
+
+  // Upsert profile with full name
+  if (full_name) {
+    await admin.from("profiles").upsert(
+      {
+        id: invitedUserId,
+        full_name,
+        is_platform_owner: false,
+      },
+      { onConflict: "id" }
+    );
+  }
 
   redirect("/owner");
 }
@@ -162,6 +273,7 @@ export default async function OwnerDashboard() {
     })) || [];
 
   const tenantIds = tenants.map((t) => t.id);
+
   if (tenantIds.length === 0) {
     return (
       <main className="mx-auto max-w-6xl p-6">
@@ -174,13 +286,14 @@ export default async function OwnerDashboard() {
           </p>
         </div>
         <div className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-6 text-sm text-[rgb(var(--muted-foreground))]">
-          No tenants found. Use the <strong>Add → Add Tenant</strong> menu to create one.
+          No tenants found. Use the <strong>Add → Add Tenant</strong> menu to
+          create one.
         </div>
       </main>
     );
   }
 
-  // Memberships for all tenants
+  // Memberships across all tenants
   const { data: mrows } = await supabase
     .from("tenant_memberships")
     .select("tenant_id, user_id, role")
@@ -188,7 +301,7 @@ export default async function OwnerDashboard() {
 
   const membersRaw: any[] = mrows ?? [];
 
-  // Collect all unique user_ids to fetch their names
+  // Collect unique user_ids and fetch their profiles
   const userIds = Array.from(
     new Set(membersRaw.map((m) => String(m.user_id)))
   );
@@ -205,7 +318,6 @@ export default async function OwnerDashboard() {
   );
 
   const membersByTenant = new Map<string, UiMember[]>();
-
   membersRaw.forEach((m: any) => {
     const tid = String(m.tenant_id);
     const arr = membersByTenant.get(tid) ?? [];
@@ -218,7 +330,6 @@ export default async function OwnerDashboard() {
     membersByTenant.set(tid, arr);
   });
 
-  // Fill member counts
   tenants.forEach((t) => {
     t.memberCount = membersByTenant.get(t.id)?.length ?? 0;
   });
@@ -244,7 +355,7 @@ export default async function OwnerDashboard() {
               key={t.id}
               className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
             >
-              {/* Header */}
+              {/* Card header */}
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
@@ -259,7 +370,7 @@ export default async function OwnerDashboard() {
                 </div>
               </div>
 
-              {/* Module chips */}
+              {/* Modules chips */}
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {enabled.length > 0 ? (
                   enabled.map(([key]) => (
@@ -277,10 +388,11 @@ export default async function OwnerDashboard() {
                 )}
               </div>
 
-              {/* Manage */}
+              {/* Manage section */}
               <details className="group mt-4">
                 <summary className="inline-flex cursor-pointer list-none items-center rounded-lg border border-[rgb(var(--border))] px-3 py-1.5 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]">
-                  Manage <span className="ml-2 transition group-open:rotate-180">▾</span>
+                  Manage{" "}
+                  <span className="ml-2 transition group-open:rotate-180">▾</span>
                 </summary>
 
                 <div className="mt-3 space-y-4">
@@ -292,21 +404,29 @@ export default async function OwnerDashboard() {
                     <input type="hidden" name="tenant_id" value={t.id} />
                     <div className="mb-2 text-sm font-medium">Modules</div>
                     <div className="flex flex-wrap gap-3 text-sm">
-                      {(["work_orders", "sampling", "mft", "grants"] as (keyof TenantFeatureFlags)[]).map(
-                        (k) => (
-                          <label key={String(k)} className="inline-flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              name={String(k)}
-                              defaultChecked={!!t.features?.[k]}
-                              className="accent-[rgb(var(--accent))]"
-                            />
-                            <span className="text-[rgb(var(--muted-foreground))]">
-                              {formatModuleName(String(k))}
-                            </span>
-                          </label>
-                        )
-                      )}
+                      {(
+                        [
+                          "work_orders",
+                          "sampling",
+                          "mft",
+                          "grants",
+                        ] as (keyof TenantFeatureFlags)[]
+                      ).map((k) => (
+                        <label
+                          key={String(k)}
+                          className="inline-flex items-center gap-2"
+                        >
+                          <input
+                            type="checkbox"
+                            name={String(k)}
+                            defaultChecked={!!t.features?.[k]}
+                            className="accent-[rgb(var(--accent))]"
+                          />
+                          <span className="text-[rgb(var(--muted-foreground))]">
+                            {formatModuleName(String(k))}
+                          </span>
+                        </label>
+                      ))}
                     </div>
                     <button
                       type="submit"
@@ -316,9 +436,60 @@ export default async function OwnerDashboard() {
                     </button>
                   </form>
 
-                  {/* Members & roles */}
+                  {/* Members & Add Member */}
                   <div className="rounded-xl border border-[rgb(var(--border))] p-3">
-                    <div className="mb-2 text-sm font-medium">Members</div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-medium">Members</div>
+
+                      {/* Add Member toggle */}
+                      <details className="group relative">
+                        <summary className="inline-flex cursor-pointer list-none items-center rounded-md border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]">
+                          Add Member
+                          <span className="ml-1 transition group-open:rotate-180">
+                            ▾
+                          </span>
+                        </summary>
+                        <div className="mt-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-3 text-xs">
+                          <form action={doAddMember} className="space-y-2">
+                            <input
+                              type="hidden"
+                              name="tenant_id"
+                              value={t.id}
+                            />
+                            <div>
+                              <label className="mb-1 block">
+                                Full Name
+                              </label>
+                              <input
+                                name="full_name"
+                                required
+                                placeholder="Jane Doe"
+                                className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block">
+                                Email
+                              </label>
+                              <input
+                                name="email"
+                                type="email"
+                                required
+                                placeholder="user@example.com"
+                                className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              className="mt-1 inline-flex items-center rounded-md border border-[rgb(var(--border))] px-2 py-1 text-xs hover:bg-[rgb(var(--muted))]"
+                            >
+                              Add
+                            </button>
+                          </form>
+                        </div>
+                      </details>
+                    </div>
+
                     {members.length === 0 ? (
                       <div className="text-xs text-[rgb(var(--muted-foreground))]">
                         No members yet.
@@ -340,9 +511,20 @@ export default async function OwnerDashboard() {
                                 </div>
                               )}
                             </div>
-                            <form action={doUpdateRole} className="flex items-center gap-2">
-                              <input type="hidden" name="tenant_id" value={t.id} />
-                              <input type="hidden" name="user_id" value={m.user_id} />
+                            <form
+                              action={doUpdateRole}
+                              className="flex items-center gap-2"
+                            >
+                              <input
+                                type="hidden"
+                                name="tenant_id"
+                                value={t.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="user_id"
+                                value={m.user_id}
+                              />
                               <select
                                 name="role"
                                 defaultValue={m.role}
@@ -357,7 +539,6 @@ export default async function OwnerDashboard() {
                               <button
                                 type="submit"
                                 className="rounded-md border border-[rgb(var(--border))] px-2 py-1 text-sm hover:bg-[rgb(var(--muted))]"
-                                title="Save role"
                               >
                                 Save
                               </button>
