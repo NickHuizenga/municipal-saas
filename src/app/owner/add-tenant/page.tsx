@@ -1,5 +1,6 @@
 // src/app/owner/add-tenant/page.tsx
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import SaveButton from "@/components/SaveButton";
 
@@ -10,6 +11,7 @@ async function doCreateTenant(formData: FormData) {
   "use server";
 
   const supabase = getSupabaseServer();
+  const cookieStore = cookies();
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;
@@ -34,10 +36,10 @@ async function doCreateTenant(formData: FormData) {
 
   if (!tenant || error) {
     console.error("add-tenant error:", error);
+    cookieStore.set("owner_refresh", "1", { path: "/" });
     redirect("/owner");
   }
 
-  // make current user owner of this tenant
   await supabase.from("tenant_memberships").upsert(
     {
       tenant_id: tenant.id,
@@ -47,6 +49,7 @@ async function doCreateTenant(formData: FormData) {
     { onConflict: "tenant_id,user_id" }
   );
 
+  cookieStore.set("owner_refresh", "1", { path: "/" });
   redirect("/owner");
 }
 
