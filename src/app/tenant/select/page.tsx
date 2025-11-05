@@ -1,86 +1,235 @@
 // src/app/tenant/select/page.tsx
-import Link from "next/link";
+
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type Role =
+  | "owner"
+  | "admin"
+  | "dispatcher"
+  | "crew_leader"
+  | "crew"
+  | "viewer"
+  | string;
+
 type TenantFeatureFlags = {
-  work_orders?: boolean;
-  sampling?: boolean;
-  mft?: boolean;
-  grants?: boolean;
-  [key: string]: boolean | undefined;
+  [key: string]: boolean | null | undefined;
 };
 
 type UiTenant = {
   id: string;
   name: string;
-  role: string;
+  role: Role | null; // role for the CURRENT user in this tenant, if any
   features: TenantFeatureFlags;
 };
 
+/* ---------- helpers ---------- */
+
+function formatModuleName(key: string): string {
+  switch (key) {
+    case "work_orders":
+      return "Work Orders";
+    case "sampling":
+      return "Sampling & Compliance";
+    case "mft":
+      return "MFT Tracker";
+    case "dmr":
+      return "DMR Reports";
+    case "water_reports":
+      return "Water Reports";
+    case "grants":
+      return "Grants";
+    default:
+      return key
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (l) => l.toUpperCase());
+  }
+}
+
+function roleLabel(role: Role | null): string | null {
+  if (!role) return null;
+  // You can prettify here if needed
+  return role;
+}
+
+/* ---------- page ---------- */
+
 export default async function TenantSelectPage() {
-  const { tenants, debug } = await loadTenantsForUser();
+  const supabase = getSupabaseServer();
+
+  // 1) Auth
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth?.user;
+  if (!user) redirect("/login");
+
+  // 2) Load profile to see if this is a platform owner
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("is_platform_owner, full_name")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("tenant/select: profile error", profileError);
+  }
+
+  const isPlatformOwner = !!profile?.is_platform_owner;
+
+  let tenants: UiTenant[] = [];
+
+  if (isPlatformOwner) {
+    // 3a) PLATFORM OWNER: show ALL tenants
+    //     and mark role if the user is a member of each.
+    const { data: allTenants, error: tenantsError } = await supabase
+      .from("tenants")
+      .select("id, name, features")
+      .order("name", { ascending: true });
+
+    if (tenantsError) {
+      console.error("tenant/select: tenants error", tenantsError);
+    }
+
+    // membership rows (for this user) to get roles where they exist
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from("tenant_memberships")
+      .select("tenant_id, role")
+      .eq("user_id", user.id);
+
+    if (membershipError) {
+      console.error("tenant/select: membership error", membershipError);
+    }
+
+    const roleByTenant = new Map<string, Role>();
+    (membershipRows ?? []).forEach((m: any) => {
+      roleByTenant.set(String(m.tenant_id), String(m.role));
+    });
+
+    tenants =
+      (allTenants ?? []).map((t: any) => ({
+        id: String(t.id),
+        name: String(t.name ?? "Unnamed tenant"),
+        features: (t.features ?? {}) as TenantFeatureFlags,
+        role: roleByTenant.get(String(t.id)) ?? null,
+      })) ?? [];
+  } else {
+    // 3b) NORMAL USER: show ONLY tenants they have memberships in
+    const { data: rows, error: rowsError } = await supabase
+      .from("tenant_memberships")
+      .select("role, tenants(id, name, features)")
+      .eq("user_id", user.id)
+      .order("tenants(name)", { ascending: true });
+
+    if (rowsError) {
+      console.error("tenant/select: memberships+tenants error", rowsError);
+    }
+
+    tenants =
+      (rows ?? [])
+        .map((row: any) => {
+          const t = row.tenants;
+          if (!t) return null;
+          return {
+            id: String(t.id),
+            name: String(t.name ?? "Unnamed tenant"),
+            features: (t.features ?? {}) as TenantFeatureFlags,
+            role: row.role as Role,
+          } as UiTenant;
+        })
+        .filter(Boolean) ?? [];
+  }
+
+  const hasTenants = tenants.length > 0;
 
   return (
-    <main className="mx-auto max-w-6xl p-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
-        Select a Tenant
-      </h1>
-      <p className="text-sm text-[rgb(var(--muted-foreground))] mt-1 mb-6">
-        Pick a municipality to continue.
-      </p>
-
-      {tenants.length === 0 ? (
-        <div className="rounded-2xl border p-6">
-          <p className="mb-2">No tenants linked to your account yet.</p>
-          <p className="text-sm text-[rgb(var(--muted-foreground))]">
-            Ask an owner to invite you, or{" "}
-            <Link className="underline" href="/settings/invite">
-              invite a user
-            </Link>{" "}
-            if you’re an owner.
+    <main className="mx-auto max-w-6xl p-6 space-y-6">
+      {/* Header */}
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
+          Select a Tenant
+        </h1>
+        <p className="text-sm text-[rgb(var(--muted-foreground))]">
+          Pick a municipality to continue.
+        </p>
+        {isPlatformOwner && (
+          <p className="text-xs text-[rgb(var(--muted-foreground))]">
+            You are a platform owner. All tenants are visible here. Tenants
+            where you are also a member will show your role.
           </p>
-          {debug && (
-            <pre className="mt-3 text-xs text-[rgb(var(--muted-foreground))] whitespace-pre-wrap">
-              Debug: {debug}
-            </pre>
+        )}
+      </header>
+
+      {/* No tenants found */}
+      {!hasTenants && (
+        <section className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-6 text-sm text-[rgb(var(--muted-foreground))]">
+          <p className="font-medium text-[rgb(var(--card-foreground))]">
+            No tenants linked to your account yet.
+          </p>
+          {!isPlatformOwner && (
+            <p className="mt-2">
+              Ask an owner to invite you, or{" "}
+              <a
+                href="/invite"
+                className="underline underline-offset-2 hover:text-[rgb(var(--foreground))]"
+              >
+                invite a user
+              </a>{" "}
+              if you&apos;re an owner.
+            </p>
           )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {tenants.map((t) => {
-            const enabledModules = Object.entries(t.features)
-              .filter(([_, v]) => v)
-              .map(([k]) => k);
+          {isPlatformOwner && (
+            <p className="mt-2">
+              As a platform owner, you can create new tenants from your owner
+              dashboard.
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* Tenant cards */}
+      {hasTenants && (
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {tenants.map((tenant) => {
+            const features = tenant.features || {};
+            const enabledModules = Object.entries(features).filter(
+              ([, value]) => !!value
+            );
+
+            const role = roleLabel(tenant.role);
 
             return (
-              <form
-                key={t.id}
-                action="/tenant/select/set"
-                method="post"
-                className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm hover:shadow-[0_0_12px_rgba(80,110,160,0.15)] transition"
+              <div
+                key={tenant.id}
+                className="flex flex-col rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-5 shadow-sm"
               >
-                <div className="flex items-center justify-between">
-                  <div className="text-lg font-medium text-[rgb(var(--card-foreground))]">
-                    {t.name}
+                {/* Header row */}
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-medium text-[rgb(var(--card-foreground))]">
+                      {tenant.name}
+                    </h2>
+                    <p className="mt-0.5 text-xs text-[rgb(var(--muted-foreground))]">
+                      {tenant.id}
+                    </p>
                   </div>
-                  <span className="text-xs rounded-full border border-[rgb(var(--border))] px-2 py-0.5 text-[rgb(var(--muted-foreground))]">
-                    {t.role}
-                  </span>
+                  {role && (
+                    <span className="rounded-full border border-[rgb(var(--border))] px-3 py-0.5 text-xs text-[rgb(var(--muted-foreground))]">
+                      {role}
+                    </span>
+                  )}
                 </div>
 
                 {/* Module chips */}
-                <div className="flex flex-wrap gap-1.5 mt-3">
+                <div className="mb-4 flex flex-wrap gap-1.5">
                   {enabledModules.length > 0 ? (
-                    enabledModules.map((mod) => (
+                    enabledModules.map(([key]) => (
                       <span
-                        key={mod}
-                        className="rounded-full border border-[rgb(var(--accent))]/40 bg-[rgb(var(--muted))]/40 text-[rgb(var(--accent-foreground))]/80 text-xs px-2 py-0.5"
+                        key={key}
+                        className="rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--muted))]/20 px-3 py-1 text-xs text-[rgb(var(--muted-foreground))]"
                       >
-                        {formatModuleName(mod)}
+                        {formatModuleName(key)}
                       </span>
                     ))
                   ) : (
@@ -90,75 +239,31 @@ export default async function TenantSelectPage() {
                   )}
                 </div>
 
-                <input type="hidden" name="tenant_id" value={t.id} />
-                <button
-                  type="submit"
-                  className="mt-4 inline-flex items-center rounded-lg border border-[rgb(var(--border))] bg-transparent px-3 py-1.5 text-sm hover:bg-[rgb(var(--muted))] hover:text-[rgb(var(--accent-foreground))] transition"
-                >
-                  Continue
-                </button>
-              </form>
+                {/* Continue button */}
+                <div className="mt-auto pt-2">
+                  <form
+                    action="/tenant/resolve"
+                    method="post"
+                    className="inline"
+                  >
+                    <input
+                      type="hidden"
+                      name="tenant_id"
+                      value={tenant.id}
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-full border border-[rgb(var(--border))] px-4 py-1.5 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]"
+                    >
+                      Continue
+                    </button>
+                  </form>
+                </div>
+              </div>
             );
           })}
-        </div>
+        </section>
       )}
     </main>
   );
-}
-
-async function loadTenantsForUser(): Promise<{ tenants: UiTenant[]; debug?: string }> {
-  try {
-    const supabase = getSupabaseServer();
-    const { data: auth } = await supabase.auth.getUser();
-    const user = auth?.user;
-    if (!user) redirect("/login");
-
-    // 1) Read this user's memberships (no joins)
-    const { data: memberships, error: mErr } = await supabase
-      .from("tenant_memberships")
-      .select("tenant_id, role")
-      .eq("user_id", user.id);
-
-    if (mErr) return { tenants: [], debug: `membership error: ${mErr.message}` };
-    if (!memberships?.length) return { tenants: [], debug: "no membership rows for this user" };
-
-    const tenantIds = [...new Set(memberships.map((m) => m.tenant_id))];
-
-    // 2) Fetch those tenants (id, name, features)
-    const { data: tenants, error: tErr } = await supabase
-      .from("tenants")
-      .select("id, name, features")
-      .in("id", tenantIds);
-
-    if (tErr) return { tenants: [], debug: `tenants error: ${tErr.message}` };
-
-    // 3) Merge role back in
-    const roleByTenant = new Map(memberships.map((m) => [m.tenant_id, m.role]));
-    const ui: UiTenant[] = (tenants ?? []).map((t) => ({
-      id: t.id as string,
-      name: (t.name as string) ?? "Unnamed",
-      role: (roleByTenant.get(t.id as string) as string) ?? "viewer",
-      features: ((t as any).features ?? {}) as TenantFeatureFlags,
-    }));
-
-    return { tenants: ui };
-  } catch (e: any) {
-    return { tenants: [], debug: String(e?.message ?? e) };
-  }
-}
-
-/** Simple label formatter for chips */
-function formatModuleName(key: string): string {
-  switch (key) {
-    case "work_orders":
-      return "Work Orders";
-    case "sampling":
-      return "Sampling & Compliance";
-    case "mft":
-      return "MFT Tracker";
-    case "grants":
-      return "Grants";
-    default:
-      return key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-  }
 }
