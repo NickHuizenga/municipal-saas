@@ -1,132 +1,137 @@
 // src/components/header.tsx
-import { cookies } from "next/headers";
+
 import Link from "next/link";
-import NavMenusClient from "@/components/NavMenusClient";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 
-const TENANT_COOKIE_NAME = process.env.TENANT_COOKIE_NAME ?? "tenant_id";
-
-type Role = "owner" | "admin" | "dispatcher" | "crew_leader" | "crew" | "viewer";
-type TenantFeatures = { work_orders?: boolean; sampling?: boolean; mft?: boolean; grants?: boolean };
-
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))]">
-      {children}
-    </span>
-  );
-}
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function Header() {
   const supabase = getSupabaseServer();
 
-  // Auth
   const { data: auth } = await supabase.auth.getUser();
   const user = auth?.user;
 
   if (!user) {
+    // Not signed in – show a minimal header
     return (
-      <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Pill>Signed out</Pill>
+      <header className="mb-6 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+          <div className="text-sm text-[rgb(var(--muted-foreground))]">
+            Not signed in
           </div>
           <Link
             href="/login"
-            className="rounded-full border border-[rgb(var(--border))] px-3 py-1 text-sm text-[rgb(var(--muted-foreground))] hover:bg-[rgb(var(--muted))]"
+            className="rounded-full border border-[rgb(var(--border))] px-4 py-1.5 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]"
           >
-            Login
+            Sign in
           </Link>
         </div>
       </header>
     );
   }
 
-  // Profile
-  const { data: profile } = await supabase
+  // Load profile to get name + platform_owner flag
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("full_name, is_platform_owner")
     .eq("id", user.id)
     .maybeSingle();
-  const name = profile?.full_name ?? user.email ?? "User";
+
+  if (profileError) {
+    console.error("header: profile error", profileError);
+  }
+
+  const fullName = profile?.full_name || user.email || "User";
   const isPlatformOwner = !!profile?.is_platform_owner;
-
-  // Tenant & membership
-  const tenantId = cookies().get(TENANT_COOKIE_NAME)?.value ?? null;
-
-  let role: Role | null = null;
-  if (tenantId) {
-    const { data: membership } = await supabase
-      .from("tenant_memberships")
-      .select("role")
-      .eq("tenant_id", tenantId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    role = (membership?.role as Role) ?? null;
-  }
-
-  // Features for Module menu
-  let features: TenantFeatures | null = null;
-  if (tenantId) {
-    const { data: tenant } = await supabase
-      .from("tenants")
-      .select("features")
-      .eq("id", tenantId)
-      .maybeSingle();
-    features = (tenant?.features as TenantFeatures) ?? null;
-  }
-
-  // VIEW menu
-  const viewItems = [
-    { href: "/", label: "Dashboard" },
-    { href: "/tenant/select", label: "Tenants" },
-    ...(isPlatformOwner ? [{ href: "/owner", label: "Owner Dashboard" }] : []),
-  ];
-
-  // MODULE menu (respect tenant features; owner can see disabled but they’re greyed out)
-  const catalog = [
-    { key: "work_orders", label: "Work Orders", href: "/work-orders" },
-    { key: "sampling", label: "Sampling & Compliance", href: "/sampling" },
-    { key: "mft", label: "MFT Tracker", href: "/mft" },
-    { key: "grants", label: "Grants", href: "/grants" },
-  ] as const;
-
-  const moduleItems = catalog
-    .map((m) => {
-      const enabled = tenantId && features ? !!(features as any)[m.key] : true;
-      const disabled = tenantId ? !enabled && !isPlatformOwner : false;
-      const visible = isPlatformOwner || enabled || !tenantId;
-      return visible ? { label: m.label, href: m.href, disabled } : null;
-    })
-    .filter(Boolean) as { label: string; href: string; disabled?: boolean }[];
-
-  // ADD menu (owner page only). “Add User” requires tenant pre-selection.
-  const inviteHref = tenantId ? `/invite?tenant_id=${encodeURIComponent(tenantId)}` : "/invite";
-  const addItems =
-    isPlatformOwner
-      ? [
-          { label: "Add Tenant", href: "/owner/add-tenant" },
-          { label: "Add User", href: inviteHref, disabled: !tenantId }, // disabled until a tenant is selected
-        ]
-      : [];
+  const rolePill = isPlatformOwner ? "Platform Owner" : "Signed in";
 
   return (
-    <header className="mx-auto mb-4 mt-2 w-full max-w-6xl rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        {/* Left: account info */}
-        <div className="flex items-center gap-3">
-          <Pill>{isPlatformOwner ? "Platform Owner" : role ?? "Member"}</Pill>
-          <span className="text-sm text-[rgb(var(--muted-foreground))]">{name}</span>
-        </div>
+    <header className="mb-6 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]">
+      <div className="mx-auto max-w-6xl px-4 pt-4 pb-3">
+        <div className="flex items-center justify-between rounded-3xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-4 py-3">
+          {/* Left: account info */}
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center rounded-full border border-[rgb(var(--border))] px-3 py-1 text-xs text-[rgb(var(--muted-foreground))]">
+              {rolePill}
+            </span>
+            <span className="text-sm text-[rgb(var(--card-foreground))]">
+              {fullName}
+            </span>
+          </div>
 
-        {/* Right: View / Module / Add (Add shows only on /owner via client check) */}
-        <NavMenusClient
-          viewItems={viewItems}
-          moduleItems={moduleItems}
-          addItems={isPlatformOwner ? addItems : undefined}
-          showAddWhenPathStartsWith="/owner"
-        />
+          {/* Right: dropdowns */}
+          <div className="flex items-center gap-3 text-sm">
+            {/* View dropdown */}
+            <Dropdown label="View">
+              <DropdownItem href="/">Dashboard</DropdownItem>
+              <DropdownItem href="/tenant/select">Tenants</DropdownItem>
+              <DropdownItem href="/owner">Owner Dashboard</DropdownItem>
+            </Dropdown>
+
+            {/* Module dropdown – links are placeholders for now */}
+            <Dropdown label="Module">
+              <DropdownItem href="/work-orders">Work Orders</DropdownItem>
+              <DropdownItem href="/sampling">Sampling &amp; Compliance</DropdownItem>
+              <DropdownItem href="/dmr">DMR Reports</DropdownItem>
+              <DropdownItem href="/water-reports">Water Reports</DropdownItem>
+              <DropdownItem href="/mft">MFT Tracker</DropdownItem>
+              <DropdownItem href="/grants">Grants</DropdownItem>
+            </Dropdown>
+
+            {/* Add dropdown – only for platform owners */}
+            {isPlatformOwner && (
+              <Dropdown label="Add">
+                <DropdownItem href="/owner/add-tenant">
+                  Add Tenant
+                </DropdownItem>
+                <DropdownItem href="/invite">
+                  Invite User
+                </DropdownItem>
+              </Dropdown>
+            )}
+          </div>
+        </div>
       </div>
     </header>
+  );
+}
+
+/* ---------- Dropdown components (pure server, using <details>) ---------- */
+
+type DropdownProps = {
+  label: string;
+  children: React.ReactNode;
+};
+
+function Dropdown({ label, children }: DropdownProps) {
+  return (
+    <details className="group relative">
+      <summary className="flex cursor-pointer list-none items-center rounded-full border border-[rgb(var(--border))] px-3 py-1.5 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]">
+        <span>{label}</span>
+        <span className="ml-1 text-[0.7rem] transition-transform group-open:rotate-180">
+          ▾
+        </span>
+      </summary>
+      <div className="absolute right-0 z-20 mt-2 w-44 rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--popover))] py-1 shadow-lg">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+type DropdownItemProps = {
+  href: string;
+  children: React.ReactNode;
+};
+
+function DropdownItem({ href, children }: DropdownItemProps) {
+  return (
+    <Link
+      href={href}
+      className="block px-3 py-1.5 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]"
+    >
+      {children}
+    </Link>
   );
 }
