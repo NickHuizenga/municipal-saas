@@ -6,6 +6,7 @@ import { getSupabaseServer } from "@/lib/supabaseServer";
 const TENANT_COOKIE_NAME =
   process.env.TENANT_COOKIE_NAME || "tenant_id";
 
+
 export async function POST(req: NextRequest) {
   const supabase = getSupabaseServer();
 
