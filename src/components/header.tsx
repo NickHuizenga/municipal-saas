@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { getSupabaseServer } from "@/lib/supabaseServer";
+import { HeaderDropdown } from "./HeaderDropdown";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,7 +14,7 @@ export default async function Header() {
   const user = auth?.user;
 
   if (!user) {
-    // Not signed in – show a minimal header
+    // Not signed in – simple header
     return (
       <header className="mb-6 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
@@ -31,7 +32,7 @@ export default async function Header() {
     );
   }
 
-  // Load profile to get name + platform_owner flag
+  // Load profile for name + platform_owner flag
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("full_name, is_platform_owner")
@@ -45,6 +46,27 @@ export default async function Header() {
   const fullName = profile?.full_name || user.email || "User";
   const isPlatformOwner = !!profile?.is_platform_owner;
   const rolePill = isPlatformOwner ? "Platform Owner" : "Signed in";
+
+  // Dropdown items
+  const viewItems = [
+    { href: "/", label: "Dashboard" },
+    { href: "/tenant/select", label: "Tenants" },
+    { href: "/owner", label: "Owner Dashboard" },
+  ];
+
+  const moduleItems = [
+    { href: "/work-orders", label: "Work Orders" },
+    { href: "/sampling", label: "Sampling & Compliance" },
+    { href: "/dmr", label: "DMR Reports" },
+    { href: "/water-reports", label: "Water Reports" },
+    { href: "/mft", label: "MFT Tracker" },
+    { href: "/grants", label: "Grants" },
+  ];
+
+  const addItems = [
+    { href: "/owner/add-tenant", label: "Add Tenant" },
+    { href: "/invite", label: "Invite User" },
+  ];
 
   return (
     <header className="mb-6 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]">
@@ -62,76 +84,14 @@ export default async function Header() {
 
           {/* Right: dropdowns */}
           <div className="flex items-center gap-3 text-sm">
-            {/* View dropdown */}
-            <Dropdown label="View">
-              <DropdownItem href="/">Dashboard</DropdownItem>
-              <DropdownItem href="/tenant/select">Tenants</DropdownItem>
-              <DropdownItem href="/owner">Owner Dashboard</DropdownItem>
-            </Dropdown>
-
-            {/* Module dropdown – links are placeholders for now */}
-            <Dropdown label="Module">
-              <DropdownItem href="/work-orders">Work Orders</DropdownItem>
-              <DropdownItem href="/sampling">Sampling &amp; Compliance</DropdownItem>
-              <DropdownItem href="/dmr">DMR Reports</DropdownItem>
-              <DropdownItem href="/water-reports">Water Reports</DropdownItem>
-              <DropdownItem href="/mft">MFT Tracker</DropdownItem>
-              <DropdownItem href="/grants">Grants</DropdownItem>
-            </Dropdown>
-
-            {/* Add dropdown – only for platform owners */}
+            <HeaderDropdown label="View" items={viewItems} />
+            <HeaderDropdown label="Module" items={moduleItems} />
             {isPlatformOwner && (
-              <Dropdown label="Add">
-                <DropdownItem href="/owner/add-tenant">
-                  Add Tenant
-                </DropdownItem>
-                <DropdownItem href="/invite">
-                  Invite User
-                </DropdownItem>
-              </Dropdown>
+              <HeaderDropdown label="Add" items={addItems} />
             )}
           </div>
         </div>
       </div>
     </header>
-  );
-}
-
-/* ---------- Dropdown components (pure server, using <details>) ---------- */
-
-type DropdownProps = {
-  label: string;
-  children: React.ReactNode;
-};
-
-function Dropdown({ label, children }: DropdownProps) {
-  return (
-    <details className="group relative">
-      <summary className="flex cursor-pointer list-none items-center rounded-full border border-[rgb(var(--border))] px-3 py-1.5 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]">
-        <span>{label}</span>
-        <span className="ml-1 text-[0.7rem] transition-transform group-open:rotate-180">
-          ▾
-        </span>
-      </summary>
-      <div className="absolute right-0 z-20 mt-2 w-44 rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--popover))] py-1 shadow-lg">
-        {children}
-      </div>
-    </details>
-  );
-}
-
-type DropdownItemProps = {
-  href: string;
-  children: React.ReactNode;
-};
-
-function DropdownItem({ href, children }: DropdownItemProps) {
-  return (
-    <Link
-      href={href}
-      className="block px-3 py-1.5 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--muted))]"
-    >
-      {children}
-    </Link>
   );
 }
