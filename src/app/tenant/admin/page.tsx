@@ -1,5 +1,4 @@
 // src/app/tenant/admin/page.tsx
-import React from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import Header from "@/components/header";
@@ -8,7 +7,7 @@ import { getSupabaseServer } from "@/lib/supabaseServer";
 export const revalidate = 0;
 
 // 🔧 Server action to save the access matrix
-export async function updateUserModuleAccess(formData: FormData) {
+async function updateUserModuleAccess(formData: FormData) {
   "use server";
 
   const tenantId = formData.get("tenant_id") as string | null;
@@ -103,17 +102,16 @@ export async function updateUserModuleAccess(formData: FormData) {
     }
   }
 
-  // Upsert each row into user_module_access
-  // (Unique constraint on tenant_id, user_id, module_name)
-  for (const row of updates) {
-    const { error } = await supabase
+  // Upsert all rows in one go
+  if (updates.length > 0) {
+    const { error: upsertError } = await supabase
       .from("user_module_access")
-      .upsert(row, {
+      .upsert(updates, {
         onConflict: "tenant_id,user_id,module_name",
       });
 
-    if (error) {
-      console.error("Error upserting user_module_access:", error);
+    if (upsertError) {
+      console.error("Error upserting user_module_access:", upsertError);
     }
   }
 
@@ -150,7 +148,7 @@ export default async function TenantAdminPage() {
 
   const isPlatformOwner = profile?.is_platform_owner === true;
 
-  // Tenant membership for this user
+  // Tenant membership for this user (and tenant name via FK if configured)
   const { data: membership } = await supabase
     .from("tenant_memberships")
     .select("role, tenants(name)")
@@ -227,7 +225,10 @@ export default async function TenantAdminPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold">Tenant Admin Dashboard</h1>
           <p className="text-sm text-zinc-400">
-            Tenant: <span className="font-medium text-zinc-200">{tenantName}</span>
+            Tenant:{" "}
+            <span className="font-medium text-zinc-200">
+              {tenantName}
+            </span>
           </p>
           <p className="text-xs text-zinc-500">
             Manage per-user access to modules for this municipality.
