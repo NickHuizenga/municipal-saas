@@ -30,7 +30,7 @@ type DisplayModule = AllowedModule & {
 export default async function TenantHomePage() {
   const ctx = await getTenantContext();
 
-  const { tenantName, tenantRole, allowedModules } = ctx;
+  const { tenantName, tenantRole, tenantId, allowedModules } = ctx;
 
   const displayModules: DisplayModule[] = allowedModules.map((mod) => {
     let route: string | undefined;
@@ -64,13 +64,12 @@ export default async function TenantHomePage() {
 
   return (
     <main className="p-6 space-y-6">
+      {/* Heading: Tenant name + ID + role */}
       <section className="space-y-1">
-        <h1 className="text-2xl font-semibold">Tenant Home</h1>
-        <p className="text-sm text-zinc-400">
-          Tenant:{" "}
-          <span className="font-medium text-zinc-200">
-            {tenantName}
-          </span>
+        <h1 className="text-2xl font-semibold">{tenantName}</h1>
+        <p className="text-xs text-zinc-500">
+          Tenant ID:{" "}
+          <span className="font-mono text-zinc-300">{tenantId}</span>
         </p>
         {tenantRole && (
           <p className="text-xs text-zinc-500">
@@ -87,7 +86,11 @@ export default async function TenantHomePage() {
         </h2>
         <p className="mt-1 text-xs text-zinc-400">
           This will be your at-a-glance overview across Work Orders,
-          Sampling, DMRs, and other enabled modules for this tenant.
+          Sampling, DMRs, and other enabled modules for{" "}
+          <span className="font-medium text-zinc-200">
+            {tenantName}
+          </span>
+          .
         </p>
       </section>
 
@@ -141,7 +144,7 @@ export default async function TenantHomePage() {
                         </div>
                       );
 
-                      // If we have a route, the card is clickable; if not, it's just a static card for now
+                      // If we have a route, the card is clickable; if not, static for now
                       return mod.route ? (
                         <a key={mod.key} href={mod.route}>
                           {content}
