@@ -66,21 +66,29 @@ export async function inviteUser(formData: FormData) {
     redirect("/tenant/home");
   }
 
-  // --- Find or create auth user via Admin API ---
+  // --- Find or create auth user via Admin API (Supabase JS v2 style) ---
 
   let userId: string | null = null;
 
   try {
-    const { data: existing, error: getErr } =
-      await adminSupabase.auth.admin.getUserByEmail(email);
+    // Try to find existing user by email
+    const { data: listData, error: listErr } =
+      await adminSupabase.auth.admin.listUsers({
+        page: 1,
+        perPage: 1,
+        email,
+      });
 
-    if (getErr) {
-      console.error("Error fetching user by email:", getErr);
+    if (listErr) {
+      console.error("Error listing users by email:", listErr);
     }
 
-    if (existing?.user) {
-      userId = existing.user.id;
+    const existingUser = listData?.users?.[0];
+
+    if (existingUser) {
+      userId = existingUser.id;
     } else {
+      // No existing user → invite
       const { data: inviteData, error: inviteErr } =
         await adminSupabase.auth.admin.inviteUserByEmail(email, {
           data: fullName ? { full_name: fullName } : undefined,
@@ -111,7 +119,6 @@ export async function inviteUser(formData: FormData) {
         id: userId,
         full_name: fullName,
         email,
-        // is_platform_owner left as default false
       },
       { onConflict: "id" }
     );
