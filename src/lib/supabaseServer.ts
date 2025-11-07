@@ -1,35 +1,34 @@
-// src/lib/supabaseServer.ts
 import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 
 export function getSupabaseServer() {
   const cookieStore = cookies();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
-  return createServerClient(url, anon, {
-    cookies: {
-      get(name: string) {
-        try {
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
           return cookieStore.get(name)?.value;
-        } catch {
-          return undefined;
-        }
+        },
+        set(name: string, value: string, options: any) {
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {
+            // no-op — cookies() is read-only on edge runtimes
+          }
+        },
+        remove(name: string, options: any) {
+          try {
+            cookieStore.set({ name, value: "", ...options });
+          } catch {
+            // no-op
+          }
+        },
       },
-      set(name: string, value: string, options: CookieOptions) {
-        try {
-          cookieStore.set({ name, value, ...options });
-        } catch {
-          // ignore write failures during RSC/edge
-        }
-      },
-      remove(name: string, options: CookieOptions) {
-        try {
-          cookieStore.set({ name, value: "", expires: new Date(0), ...options });
-        } catch {
-          // ignore
-        }
-      },
-    },
-  });
+    }
+  );
+
+  return supabase;
 }
