@@ -3,6 +3,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import Header from "@/components/header";
 import { getSupabaseServer } from "@/lib/supabaseServer";
+import {
+  MODULE_DEFINITIONS,
+  isModuleKey,
+  ModuleKey,
+} from "@/config/modules";
 
 export const revalidate = 0;
 
@@ -89,14 +94,15 @@ async function updateUserModuleAccess(formData: FormData) {
 
   for (const member of members) {
     for (const mod of modules) {
-      const key = `access__${member.user_id}__${mod.module_name}`;
+      const moduleName = mod.module_name as string;
+      const key = `access__${member.user_id}__${moduleName}`;
       const value = formData.get(key);
       const enabled = value === "on"; // checkbox is present only if checked
 
       updates.push({
         tenant_id: tenantId,
         user_id: member.user_id,
-        module_name: mod.module_name,
+        module_name: moduleName,
         enabled,
       });
     }
@@ -201,7 +207,22 @@ export default async function TenantAdminPage() {
     console.error("Error loading user_module_access:", accessError);
   }
 
-  const moduleNames = modules?.map((m) => m.module_name) ?? [];
+  const moduleNames: string[] =
+    modules?.map((m) => m.module_name as string) ?? [];
+
+  const displayModules = moduleNames.map((name) => {
+    if (isModuleKey(name)) {
+      const def = MODULE_DEFINITIONS[name as ModuleKey];
+      return {
+        key: name,
+        label: def.label,
+      };
+    }
+    return {
+      key: name,
+      label: name,
+    };
+  });
 
   const memberRows =
     members?.map((m) => ({
@@ -259,12 +280,12 @@ export default async function TenantAdminPage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-400">
                       Role
                     </th>
-                    {moduleNames.map((moduleName) => (
+                    {displayModules.map((module) => (
                       <th
-                        key={moduleName}
+                        key={module.key}
                         className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-zinc-400"
                       >
-                        {moduleName}
+                        {module.label}
                       </th>
                     ))}
                   </tr>
@@ -290,7 +311,8 @@ export default async function TenantAdminPage() {
                       <td className="px-4 py-3 text-sm text-zinc-300">
                         {member.role}
                       </td>
-                      {moduleNames.map((moduleName) => {
+                      {displayModules.map((module) => {
+                        const moduleName = module.key;
                         const key = `${member.userId}__${moduleName}`;
                         const enabled = accessMap.get(key) ?? false;
 
