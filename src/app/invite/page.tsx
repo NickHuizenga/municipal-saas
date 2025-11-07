@@ -1,244 +1,281 @@
 // src/app/invite/page.tsx
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import SaveButton from "@/components/SaveButton";
+import { inviteUser } from "./actions";
 
-export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Role =
-  | "owner"
-  | "admin"
-  | "dispatcher"
-  | "crew_leader"
-  | "crew"
-  | "viewer";
+type TenantOption = {
+  id: string;
+  name: string;
+};
 
-async function doInvite(formData: FormData) {
-  "use server";
+type InvitePageProps = {
+  searchParams?: { [key: string]: string | string[] | undefined };
+};
 
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "owner", label: "Owner" },
+  { value: "admin", label: "Admin" },
+  { value: "crew_leader", label: "Crew Leader" },
+  { value: "crew", label: "Crew" },
+  { value: "dispatcher", label: "Dispatcher" },
+  { value: "viewer", label: "Viewer" },
+];
+
+export default async function InvitePage({ searchParams }: InvitePageProps) {
   const supabase = getSupabaseServer();
-  const admin = getSupabaseAdmin();
-  const cookieStore = cookies();
 
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const full_name = String(formData.get("full_name") ?? "").trim();
-  const tenant_id = String(formData.get("tenant_id") ?? "");
-  const role = String(formData.get("role") ?? "viewer") as Role;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (!email || !tenant_id) return;
+  if (!session) {
+    redirect("/login");
+  }
 
-  const { data: auth } = await supabase.auth.getUser();
-  const user = auth?.user;
-  if (!user) redirect("/login");
+  const userId = session.user.id;
 
+  // Profile → platform owner?
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
-    .eq("id", user.id)
+    .eq("id", userId)
     .maybeSingle();
 
-  const isPlatformOwner = !!profile?.is_platform_owner;
+  const isPlatformOwner = profile?.is_platform_owner === true;
 
-  let allowed = isPlatformOwner;
-  if (!allowed) {
-    const { data: membership } = await supabase
-      .from("tenant_memberships")
-      .select("role")
-      .eq("tenant_id", tenant_id)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    allowed = membership?.role === "owner";
-  }
-
-  if (!allowed) redirect("/");
-
-  let invitedUserId: string | null = null;
-
-  const { data: inviteData, error: inviteErr } =
-    await (admin as any).auth.admin.inviteUserByEmail(email);
-
-  if (!inviteErr && inviteData) {
-    const raw = inviteData as any;
-    const userObj = raw?.user ?? raw;
-    if (userObj?.id) invitedUserId = userObj.id;
-  }
-
-  if (!invitedUserId && inviteErr) {
-    try {
-      const listRes = await (admin as any).auth.admin.listUsers({
-        page: 1,
-        perPage: 1000,
-      });
-
-      const users: any[] =
-        (listRes as any)?.data?.users ?? (listRes as any)?.users ?? [];
-
-      const match = users.find(
-        (u) =>
-          typeof u.email === "string" &&
-          u.email.toLowerCase() === email.toLowerCase()
-      );
-
-      if (match?.id) invitedUserId = match.id as string;
-    } catch (e) {
-      console.error("listUsers fallback error:", e);
-    }
-  }
-
-  if (!invitedUserId) {
-    console.error("Could not resolve invitedUserId for email:", email, inviteErr);
-    cookieStore.set("owner_refresh", "1", { path: "/" });
-    redirect("/owner");
-  }
-
-  await admin
-    .from("tenant_memberships")
-    .upsert(
-      {
-        tenant_id,
-        user_id: invitedUserId,
-        role,
-      },
-      { onConflict: "tenant_id,user_id" }
-    );
-
-  if (full_name) {
-    await admin.from("profiles").upsert(
-      {
-        id: invitedUserId,
-        full_name,
-        is_platform_owner: false,
-      },
-      { onConflict: "id" }
-    );
-  }
-
-  cookieStore.set("owner_refresh", "1", { path: "/" });
-  redirect("/owner");
-}
-
-export default async function InvitePage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
-  const supabase = getSupabaseServer();
-
-  const { data: auth } = await supabase.auth.getUser();
-  const user = auth?.user;
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("is_platform_owner")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  const isPlatformOwner = !!profile?.is_platform_owner;
-
-  let tenants: { id: string; name: string }[] = [];
+  // Build list of tenants this user may invite into
+  let tenants: TenantOption[] = [];
 
   if (isPlatformOwner) {
-    const { data: trows } = await supabase
+    const { data: tenantRows, error: tenantsError } = await supabase
       .from("tenants")
       .select("id, name")
       .order("name", { ascending: true });
 
-    tenants =
-      (trows ?? []).map((t: any) => ({
-        id: String(t.id),
-        name: String(t.name ?? "Unnamed tenant"),
-      })) || [];
-  } else {
-    const { data: trows } = await supabase
-      .from("tenant_memberships")
-      .select("tenant_id, role, tenants!inner(id, name)")
-      .eq("user_id", user.id)
-      .eq("role", "owner");
+    if (tenantsError) {
+      console.error("Error loading tenants in /invite:", tenantsError);
+    }
 
     tenants =
-      (trows ?? []).map((row: any) => {
-        const t = row.tenants ?? row;
-        return {
-          id: String(t.id),
-          name: String(t.name ?? "Unnamed tenant"),
-        };
-      }) || [];
+      tenantRows?.map((t) => ({
+        id: t.id as string,
+        name: t.name as string,
+      })) ?? [];
+  } else {
+    // Non-platform: only tenants where current user is owner/admin
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from("tenant_memberships")
+      .select("role, tenants(id, name)")
+      .eq("user_id", userId)
+      .in("role", ["owner", "admin"]);
+
+    if (membershipError) {
+      console.error("Error loading memberships in /invite:", membershipError);
+    }
+
+    tenants =
+      membershipRows
+        ?.map((row: any) => ({
+          id: row.tenants?.id as string,
+          name: row.tenants?.name as string,
+        }))
+        .filter((t) => t.id && t.name) ?? [];
   }
 
-  const preselect =
-    (typeof searchParams?.tenant_id === "string" && searchParams.tenant_id) ||
-    "";
+  if (tenants.length === 0) {
+    return (
+      <main className="p-6 space-y-6">
+        <nav className="text-xs text-zinc-500">
+          <Link href="/" className="hover:text-zinc-300">
+            Home
+          </Link>
+          <span className="mx-1">/</span>
+          <span>Invite</span>
+        </nav>
+
+        <section className="space-y-2">
+          <h1 className="text-2xl font-semibold">Invite User</h1>
+          <p className="text-sm text-zinc-400">
+            You don&apos;t currently have permission to invite users into any
+            tenants. Only platform owners and tenant owners/admins may send
+            invites.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  const errorKey = (searchParams?.error as string | undefined) ?? "";
+  let errorMessage: string | null = null;
+
+  if (errorKey === "missing") {
+    errorMessage = "Please fill out all required fields.";
+  } else if (errorKey === "invite_failed") {
+    errorMessage =
+      "We were unable to send the invite. Please check your Supabase configuration or try again.";
+  } else if (errorKey === "membership_failed") {
+    errorMessage =
+      "The user was created, but adding them to the tenant failed. Please try again.";
+  }
+
+  const defaultTenantId =
+    (searchParams?.tenant_id as string | undefined) ?? tenants[0]?.id ?? "";
 
   return (
-    <main className="mx-auto max-w-xl p-6">
-      <h1 className="text-2xl font-semibold text-[rgb(var(--foreground))]">
-        Invite User
-      </h1>
-      <p className="mb-4 text-sm text-[rgb(var(--muted-foreground))]">
-        Invite a user, assign them to a tenant, and set their role.
-      </p>
+    <main className="p-6 space-y-6">
+      {/* Breadcrumbs */}
+      <nav className="text-xs text-zinc-500">
+        <Link href="/" className="hover:text-zinc-300">
+          Home
+        </Link>
+        <span className="mx-1">/</span>
+        <span>Invite</span>
+      </nav>
 
-      <form
-        id="invite-form"
-        action={doInvite}
-        className="rounded-2xl border border-[rgb(var(--border))] p-4"
-      >
-        <label className="mb-1 block text-sm">Full Name</label>
-        <input
-          name="full_name"
-          type="text"
-          required
-          placeholder="Jane Doe"
-          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
-        />
+      {/* Header */}
+      <section className="space-y-1">
+        <h1 className="text-2xl font-semibold">Invite a User</h1>
+        <p className="text-sm text-zinc-400">
+          Send an invite to join a municipality and assign their initial role.
+        </p>
+        <p className="text-xs text-zinc-500">
+          Only platform owners and tenant owners/admins can invite users.
+        </p>
+      </section>
 
-        <label className="mb-1 block text-sm">Email</label>
-        <input
-          name="email"
-          type="email"
-          required
-          placeholder="user@example.com"
-          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
-        />
+      {/* Form */}
+      <section className="max-w-xl">
+        {errorMessage && (
+          <div className="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+            {errorMessage}
+          </div>
+        )}
 
-        <label className="mb-1 block text-sm">Tenant</label>
-        <select
-          name="tenant_id"
-          required
-          defaultValue={preselect || ""}
-          className="mb-3 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
-        >
-          <option value="" disabled>
-            Select a tenant…
-          </option>
-          {tenants.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-
-        <label className="mb-1 block text-sm">Role</label>
-        <select
-          name="role"
-          defaultValue="viewer"
-          className="mb-4 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--card))] px-3 py-2 text-sm"
-        >
-          <option value="viewer">viewer</option>
-          <option value="crew">crew</option>
-          <option value="crew_leader">crew_leader</option>
-          <option value="dispatcher">dispatcher</option>
-          <option value="admin">admin</option>
-          <option value="owner">owner</option>
-        </select>
-
-        <SaveButton label="Send Invite" formId="invite-form" />
-      </form>
+        <InviteFormInternal tenants={tenants} defaultTenantId={defaultTenantId} />
+      </section>
     </main>
+  );
+}
+
+// Small client wrapper for sticky / dirty button behavior
+function InviteFormInternal({
+  tenants,
+  defaultTenantId,
+}: {
+  tenants: TenantOption[];
+  defaultTenantId: string;
+}) {
+  "use client";
+
+  const [dirty, setDirty] = (require("react") as typeof import("react")).useState(false);
+
+  const baseBtn =
+    "rounded-xl border px-4 py-2 text-sm font-medium transition-colors";
+  const activeBtn =
+    "border-indigo-500 bg-indigo-600 text-white shadow-sm hover:bg-indigo-500";
+  const inactiveBtn =
+    "border-zinc-700 bg-zinc-900 text-zinc-400 opacity-70 cursor-default";
+
+  const onChange = () => {
+    if (!dirty) setDirty(true);
+  };
+
+  return (
+    <form action={inviteUser} className="space-y-4">
+      {/* Sticky bar */}
+      <div className="sticky top-16 z-30 flex justify-end pb-2">
+        <button
+          type="submit"
+          disabled={!dirty}
+          className={`${baseBtn} ${dirty ? activeBtn : inactiveBtn}`}
+        >
+          Send Invite
+        </button>
+      </div>
+
+      <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+        <div className="space-y-1">
+          <label
+            htmlFor="tenant_id"
+            className="text-xs font-medium text-zinc-300"
+          >
+            Tenant
+          </label>
+          <select
+            id="tenant_id"
+            name="tenant_id"
+            defaultValue={defaultTenantId}
+            onChange={onChange}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            {tenants.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="email"
+            className="text-xs font-medium text-zinc-300"
+          >
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            required
+            onChange={onChange}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            placeholder="user@example.com"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="full_name"
+            className="text-xs font-medium text-zinc-300"
+          >
+            Full name (optional)
+          </label>
+          <input
+            id="full_name"
+            name="full_name"
+            type="text"
+            onChange={onChange}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            placeholder="Jane Doe"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="role"
+            className="text-xs font-medium text-zinc-300"
+          >
+            Role
+          </label>
+          <select
+            id="role"
+            name="role"
+            defaultValue="viewer"
+            onChange={onChange}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            {ROLE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </form>
   );
 }
