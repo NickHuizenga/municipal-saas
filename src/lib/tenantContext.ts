@@ -24,6 +24,8 @@ export type TenantContext = {
   tenantRole: string | null;
   allowedModules: AllowedModule[];
   enabledModuleNames: string[];
+  tenantHasModules: boolean;
+  userHasAnyModuleAccess: boolean;
 };
 
 /**
@@ -102,13 +104,14 @@ export async function getTenantContext(): Promise<TenantContext> {
   const enabledModuleNames: string[] =
     modules?.map((m) => m.module_name as string) ?? [];
 
+  const tenantHasModules = enabledModuleNames.length > 0;
+
   // Per-user module access overrides for this tenant
   const { data: accessRows, error: accessError } = await supabase
     .from("user_module_access")
     .select("module_name, enabled")
     .eq("tenant_id", tenantId)
-    .eq("user_id", userId)
-    .eq("enabled", true);
+    .eq("user_id", userId);
 
   if (accessError) {
     console.error(
@@ -123,10 +126,26 @@ export async function getTenantContext(): Promise<TenantContext> {
   });
 
   const hasOverrides = (accessRows?.length ?? 0) > 0;
+  const isTenantAdminOrOwner =
+    tenantRole != null && ["owner", "admin"].includes(tenantRole);
 
-  const allowedModuleNames = hasOverrides
-    ? enabledModuleNames.filter((name) => accessMap.get(name) === true)
-    : enabledModuleNames;
+  // Decide which modules this user is allowed to see
+  let allowedModuleNames: string[];
+
+  if (isPlatformOwner || isTenantAdminOrOwner) {
+    // Platform owners & tenant owners/admins see ALL enabled modules
+    allowedModuleNames = enabledModuleNames;
+  } else if (!hasOverrides) {
+    // No overrides defined for this user → default to all enabled modules
+    allowedModuleNames = enabledModuleNames;
+  } else {
+    // Overrides exist → only modules explicitly enabled for this user
+    allowedModuleNames = enabledModuleNames.filter(
+      (name) => accessMap.get(name) === true
+    );
+  }
+
+  const userHasAnyModuleAccess = allowedModuleNames.length > 0;
 
   const allowedModules: AllowedModule[] = allowedModuleNames.map((name) => {
     if (isModuleKey(name)) {
@@ -154,6 +173,8 @@ export async function getTenantContext(): Promise<TenantContext> {
     tenantRole,
     allowedModules,
     enabledModuleNames,
+    tenantHasModules,
+    userHasAnyModuleAccess,
   };
 }
 
