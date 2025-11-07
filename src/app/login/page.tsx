@@ -35,7 +35,7 @@ export default function LoginPage() {
     }
 
     // On success, send the user into the app root.
-    // Your root layout / home route will handle routing based on role.
+    // Your root routing logic (home/owner/tenant) will take over from "/".
     router.replace("/");
   };
 
@@ -115,4 +115,3 @@ export default function LoginPage() {
     </main>
   );
 }
-
