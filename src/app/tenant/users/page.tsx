@@ -1,8 +1,8 @@
 // src/app/tenant/users/page.tsx
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
-import { getTenantContext } from "@/lib/tenantContext";
 import UserManagementForm, {
   TenantUserRow,
 } from "./UserManagementForm";
@@ -10,63 +10,74 @@ import UserManagementForm, {
 export const revalidate = 0;
 
 export default async function TenantUsersPage() {
-  const ctx = await getTenantContext();
-  const { tenantId: ctxTenantId, tenantName, tenantRole, isPlatformOwner } = ctx;
-
   const supabase = getSupabaseServer();
+  const cookieStore = cookies();
 
+  // 1) Require auth
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  const currentUserId = session.user.id;
+
+  // 2) Resolve tenant from cookie (this is what /tenant/resolve sets)
+  const tenantId = cookieStore.get("tenant_id")?.value ?? null;
+
+  if (!tenantId) {
+    redirect("/tenant/select");
+  }
+
+  // 3) Load profile to see if platform owner
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", currentUserId)
+    .maybeSingle();
+
+  const isPlatformOwner = profile?.is_platform_owner === true;
+
+  // 4) Load current user's membership just for this tenant (to get their role)
+  const { data: myMembership } = await supabase
+    .from("tenant_memberships")
+    .select("role")
+    .eq("tenant_id", tenantId)
+    .eq("user_id", currentUserId)
+    .maybeSingle();
+
+  const myTenantRole = myMembership?.role as string | undefined;
   const isTenantAdminOrOwner =
-    tenantRole != null && ["owner", "admin"].includes(tenantRole);
+    myTenantRole != null && ["owner", "admin"].includes(myTenantRole);
 
-  // Only platform owners or tenant owners/admins can manage members
+  // Only platform owners or tenant owners/admins can manage users
   if (!isPlatformOwner && !isTenantAdminOrOwner) {
     redirect("/tenant/home");
   }
 
-  // 1) Resolve the canonical tenant ID from the tenants table.
-  //    This avoids any mismatch between cookie/context and DB.
-  const {
-    data: tenantRecord,
-    error: tenantError,
-  } = await supabase
+  // 5) Get tenant name for header
+  const { data: tenantRow, error: tenantError } = await supabase
     .from("tenants")
-    .select("id")
-    .eq("name", tenantName)
+    .select("name")
+    .eq("id", tenantId)
     .maybeSingle();
 
   if (tenantError) {
-    console.error("Error resolving tenant in /tenant/users:", tenantError);
+    console.error("Error loading tenant in /tenant/users:", tenantError);
   }
 
-  const tenantDbId: string | null =
-    (tenantRecord?.id as string | undefined) ?? ctxTenantId ?? null;
+  const tenantName = (tenantRow?.name as string | undefined) ?? "Selected Tenant";
 
-  if (!tenantDbId) {
-    // We can't safely resolve the tenant id; bail.
-    return (
-      <main className="p-6 space-y-6">
-        <section className="space-y-1">
-          <h1 className="text-2xl font-semibold">{tenantName}</h1>
-          <p className="text-xs text-zinc-500">
-            Tenant User Management · Unable to resolve tenant identifier.
-          </p>
-        </section>
-        <div className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-sm text-red-200">
-          We couldn&apos;t resolve the tenant ID for this municipality. Please
-          check your tenant configuration.
-        </div>
-      </main>
-    );
-  }
-
-  // 2) Get memberships for THIS tenant id (not all tenants)
+  // 6) Get ALL memberships for this tenant
   const {
     data: membershipRows,
     error: membershipsError,
   } = await supabase
     .from("tenant_memberships")
     .select("user_id, role")
-    .eq("tenant_id", tenantDbId);
+    .eq("tenant_id", tenantId);
 
   if (membershipsError) {
     console.error("Error loading tenant memberships:", membershipsError);
@@ -75,7 +86,7 @@ export default async function TenantUsersPage() {
   const memberships = membershipRows ?? [];
   const userIds = memberships.map((m: any) => m.user_id as string);
 
-  // 3) Load profiles for those users for display names
+  // 7) Load profiles for those users
   let profileMap = new Map<string, { full_name: string | null }>();
 
   if (userIds.length > 0) {
@@ -137,7 +148,7 @@ export default async function TenantUsersPage() {
           them to this municipality to manage their roles here.
         </div>
       ) : (
-        <UserManagementForm tenantId={tenantDbId} users={users} />
+        <UserManagementForm tenantId={tenantId} users={users} />
       )}
     </main>
   );
