@@ -1,72 +1,50 @@
 // src/app/page.tsx
+import { redirect } from "next/navigation";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
-export default function HomePage() {
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#020617",
-        color: "#e5e7eb",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-        padding: "2rem",
-      }}
-    >
-      <div
-        style={{
-          padding: "1.5rem 2rem",
-          borderRadius: "1rem",
-          border: "1px solid #27272a",
-          backgroundColor: "#09090b",
-          maxWidth: "32rem",
-        }}
-      >
-        <h1
-          style={{
-            fontSize: "1.5rem",
-            fontWeight: 600,
-            marginBottom: "0.5rem",
-          }}
-        >
-          Municipal SaaS Platform
-        </h1>
-        <p
-          style={{
-            fontSize: "0.9rem",
-            color: "#a1a1aa",
-            marginBottom: "0.75rem",
-          }}
-        >
-          This is a temporary home page to keep the app stable while we fix
-          auth routing.
-        </p>
-        <p style={{ fontSize: "0.8rem", color: "#71717a" }}>
-          You&apos;re signed in if Supabase accepted your credentials, but this
-          page does not run any server-side Supabase code. From here you can
-          manually open:
-        </p>
-        <ul
-          style={{
-            marginTop: "0.5rem",
-            fontSize: "0.8rem",
-            color: "#e5e7eb",
-            paddingLeft: "1rem",
-            listStyleType: "disc",
-          }}
-        >
-          <li>
-            <code>/owner</code> – Platform Owner Dashboard
-          </li>
-          <li>
-            <code>/tenant/select</code> – Tenant selection
-          </li>
-          <li>
-            <code>/login</code> – Login page
-          </li>
-        </ul>
-      </div>
-    </main>
-  );
+export const revalidate = 0;
+
+export default async function HomePage() {
+  try {
+    const supabase = getSupabaseServer();
+
+    // 1️⃣ Get current session
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error("Error getting session:", sessionError.message);
+      redirect("/login");
+    }
+
+    if (!session) {
+      redirect("/login");
+    }
+
+    const userId = session.user.id;
+
+    // 2️⃣ Fetch user profile (role / ownership)
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("is_platform_owner")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Error loading profile:", profileError.message);
+      redirect("/tenant/select");
+    }
+
+    // 3️⃣ Route appropriately
+    if (profile?.is_platform_owner) {
+      redirect("/owner");
+    }
+
+    redirect("/tenant/select");
+  } catch (err: any) {
+    console.error("Unhandled error in / route:", err.message);
+    redirect("/login");
+  }
 }
