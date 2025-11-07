@@ -8,7 +8,7 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Admin client (no cookies, service role key)
+// Admin client (no cookies, service role key) — bypasses RLS
 const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: {
     autoRefreshToken: false,
@@ -71,7 +71,7 @@ export async function inviteUser(formData: FormData) {
   let userId: string | null = null;
 
   try {
-    // listUsers only supports { page, perPage } in v2, so we filter by email ourselves
+    // listUsers in v2 only supports { page, perPage }, so we filter by email ourselves
     const { data: listData, error: listErr } =
       await adminSupabase.auth.admin.listUsers({
         page: 1,
@@ -112,15 +112,14 @@ export async function inviteUser(formData: FormData) {
     redirect("/invite?error=invite_failed");
   }
 
-  // --- Upsert profile for this user (using app client so RLS applies) ---
-
-  const { error: profileUpsertError } = await supabase
+  // --- Upsert profile for this user (ADMIN client, no RLS issues) ---
+  // Only set fields we know exist: id, full_name
+  const { error: profileUpsertError } = await adminSupabase
     .from("profiles")
     .upsert(
       {
         id: userId,
-        full_name: fullName,
-        email,
+        full_name: fullName, // this is what /tenant/users displays
       },
       { onConflict: "id" }
     );
@@ -129,7 +128,7 @@ export async function inviteUser(formData: FormData) {
     console.error("Error upserting profile:", profileUpsertError);
   }
 
-  // --- Add membership for this tenant ---
+  // --- Add membership for this tenant (app client is fine here) ---
 
   const { error: membershipError } = await supabase
     .from("tenant_memberships")
