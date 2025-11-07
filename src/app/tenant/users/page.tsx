@@ -22,25 +22,30 @@ export default async function TenantUsersPage() {
     redirect("/tenant/home");
   }
 
-  // 1) Get memberships for this tenant
+  // 1) Load ALL memberships (same approach as Platform Owner Dashboard)
   const {
-    data: membershipRows,
+    data: allMemberships,
     error: membershipsError,
   } = await supabase
     .from("tenant_memberships")
-    .select("user_id, role")
-    .eq("tenant_id", tenantId);
+    .select("tenant_id, user_id, role");
 
   if (membershipsError) {
     console.error("Error loading tenant memberships:", membershipsError);
   }
 
-  const memberships = membershipRows ?? [];
-  const userIds = memberships.map((m: any) => m.user_id as string);
+  const membershipsForTenant =
+    allMemberships?.filter(
+      (m: any) => (m.tenant_id as string) === tenantId
+    ) ?? [];
 
+  const userIds = membershipsForTenant.map(
+    (m: any) => m.user_id as string
+  );
+
+  // 2) Load profiles for those users (for names)
   let profileMap = new Map<string, { full_name: string | null }>();
 
-  // 2) Get profile names for those users
   if (userIds.length > 0) {
     const {
       data: profileRows,
@@ -61,7 +66,7 @@ export default async function TenantUsersPage() {
     });
   }
 
-  const users: TenantUserRow[] = memberships.map((m: any) => {
+  const users: TenantUserRow[] = membershipsForTenant.map((m: any) => {
     const uid = m.user_id as string;
     const prof = profileMap.get(uid);
     return {
@@ -75,18 +80,27 @@ export default async function TenantUsersPage() {
 
   return (
     <main className="p-6 space-y-6">
+      {/* Breadcrumbs */}
+      <nav className="text-xs text-zinc-500">
+        <span className="text-zinc-400">Home</span>
+        <span className="mx-1">/</span>
+        <span>Tenant</span>
+        <span className="mx-1">/</span>
+        <span>Users</span>
+      </nav>
+
       {/* Heading */}
       <section className="space-y-1">
         <h1 className="text-2xl font-semibold">{tenantName}</h1>
         <p className="text-xs text-zinc-500">
-          Tenant Members · Manage roles for users assigned to this municipality.
+          Tenant User Management · Update roles for members of this municipality.
         </p>
       </section>
 
       {!hasUsers ? (
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm text-zinc-400">
-          No members are currently assigned to this tenant. Use the Invite
-          flow to add users to this municipality.
+          No users are currently assigned to this tenant. Invite users and add
+          them to this municipality to manage their roles here.
         </div>
       ) : (
         <UserManagementForm tenantId={tenantId} users={users} />
