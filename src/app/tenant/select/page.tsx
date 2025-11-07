@@ -17,7 +17,11 @@ type TenantCard = {
   enabledModules: string[];
 };
 
-export default async function TenantSelectPage() {
+type TenantSelectPageProps = {
+  searchParams?: { [key: string]: string | string[] | undefined };
+};
+
+export default async function TenantSelectPage({ searchParams }: TenantSelectPageProps) {
   const supabase = getSupabaseServer();
 
   const {
@@ -30,21 +34,31 @@ export default async function TenantSelectPage() {
 
   const userId = session.user.id;
 
-  // Profile → platform owner?
-  const { data: profile } = await supabase
+  // Check if platform owner
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", userId)
     .maybeSingle();
 
+  if (profileError) {
+    console.error("Error loading profile in tenant/select:", profileError);
+  }
+
   const isPlatformOwner = profile?.is_platform_owner === true;
 
-  // Get tenants + roles
+  // If platform owner and not explicitly forcing the selector, bounce to /owner.
+  const forceParam = (searchParams?.force as string | undefined) ?? "";
+  if (isPlatformOwner && forceParam !== "1") {
+    redirect("/owner");
+  }
+
+  // From here down, we actually render the selector UI.
   let tenants: { id: string; name: string }[] = [];
   let membershipMap = new Map<string, string>();
 
   if (isPlatformOwner) {
-    // All tenants
+    // Platform owners see all tenants
     const { data: tenantRows, error: tenantsError } = await supabase
       .from("tenants")
       .select("id, name")
@@ -60,7 +74,7 @@ export default async function TenantSelectPage() {
         name: t.name as string,
       })) ?? [];
 
-    // Current user's memberships for role badges
+    // Their own memberships (for role pill)
     const { data: memberships, error: membershipError } = await supabase
       .from("tenant_memberships")
       .select("tenant_id, role")
@@ -74,7 +88,7 @@ export default async function TenantSelectPage() {
       (memberships ?? []).map((m) => [m.tenant_id as string, m.role as string])
     );
   } else {
-    // Non-platform users only see tenants where they are members
+    // Regular users see only tenants where they are a member
     const { data: membershipRows, error: membershipError } = await supabase
       .from("tenant_memberships")
       .select("role, tenants(id, name)")
@@ -101,8 +115,6 @@ export default async function TenantSelectPage() {
   }
 
   const tenantIds = tenants.map((t) => t.id);
-
-  // Enabled modules per tenant
   let modulesMap = new Map<string, string[]>();
 
   if (tenantIds.length > 0) {
