@@ -1,115 +1,70 @@
 // src/app/login/page.tsx
-import { redirect } from "next/navigation";
-import { getSupabaseServer } from "@/lib/supabaseServer";
+"use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+import { Auth } from "@supabase/auth-ui-react";
+import { ThemeSupa } from "@supabase/auth-ui-shared";
 
-type LoginState = {
-  error?: string | null;
-};
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-async function doLogin(_: LoginState, formData: FormData): Promise<LoginState> {
-  "use server";
+export default function LoginPage() {
+  const router = useRouter();
 
-  const email = String(formData.get("email") || "").trim();
-  const password = String(formData.get("password") || "");
+  // After login, send the user back into the app (root route will
+  // send platform owners to /owner etc. based on their profile).
+  useEffect(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        router.replace("/");
+      }
+    });
 
-  if (!email || !password) {
-    return { error: "Email and password are required." };
-  }
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [router]);
 
-  try {
-    const supabase = getSupabaseServer();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      // Supabase gives messages like "Invalid login credentials"
-      return { error: error.message || "Invalid credentials." };
-    }
-  } catch (e) {
-    return { error: "Auth service unavailable. Try again in a moment." };
-  }
-
-  // Success → take user to tenant selection
-  redirect("/tenant/select");
-}
-
-function ErrorBox({ message }: { message?: string | null }) {
-  if (!message) return null;
   return (
-    <div className="rounded-xl border border-red-300 bg-red-50/80 text-red-900 px-3 py-2 text-sm">
-      {message}
-    </div>
-  );
-}
-
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams?: { error?: string };
-}) {
-  const initialError =
-    searchParams?.error === "no_tenant"
-      ? "Please choose a tenant to continue."
-      : searchParams?.error === "unknown_tenant"
-      ? "That tenant no longer exists. Please choose again."
-      : searchParams?.error === "not_member"
-      ? "You’re not a member of that tenant."
-      : null;
-
-  // Minimal, standalone form (works with /login/layout.tsx you added)
-  return (
-    <main className="mx-auto max-w-md">
-      <div className="rounded-2xl border bg-background/70 backdrop-blur shadow-sm p-6">
-        <h1 className="text-2xl font-semibold text-center">Sign in</h1>
-        <p className="text-sm text-muted-foreground text-center mt-1">
-          Use your email and password.
+    <main className="min-h-screen bg-zinc-950 text-zinc-50 flex items-center justify-center">
+      <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
+        <h1 className="mb-2 text-center text-2xl font-semibold">Sign in</h1>
+        <p className="mb-4 text-center text-sm text-zinc-400">
+          Use your email and password to access the municipal dashboard.
         </p>
 
-        <div className="mt-4">
-          <ErrorBox message={initialError} />
-        </div>
+        <Auth
+          supabaseClient={supabase}
+          view="sign_in"
+          appearance={{
+            theme: ThemeSupa,
+            variables: {
+              default: {
+                colors: {
+                  brand: "#4f46e5",
+                  brandAccent: "#6366f1",
+                  inputBorder: "#3f3f46",
+                  inputLabelText: "#e4e4e7",
+                },
+              },
+            },
+          }}
+          providers={[]}
+          onlyThirdPartyProviders={false}
+        />
 
-        {/* Server Action form */}
-        <form action={doLogin.bind(null, {})} className="mt-4 space-y-4">
-          <div className="space-y-1">
-            <label className="text-sm font-medium" htmlFor="email">Email</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              className="w-full border rounded-lg px-3 py-2 bg-background"
-              placeholder="you@example.com"
-              autoComplete="email"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-sm font-medium" htmlFor="password">Password</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              className="w-full border rounded-lg px-3 py-2 bg-background"
-              placeholder="••••••••"
-              autoComplete="current-password"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full rounded-lg border px-4 py-2 hover:shadow-sm"
-          >
-            Sign in
-          </button>
-
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>No self-signups.</span>
-            <a href="#" className="underline">Forgot password</a>
-          </div>
-        </form>
+        <p className="mt-3 text-center text-xs text-zinc-500">
+          No self-signups. Contact your administrator for access.
+        </p>
+        <p className="mt-8 text-center text-[10px] text-zinc-600">
+          CMSAlpha 2025
+        </p>
       </div>
     </main>
   );
