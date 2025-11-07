@@ -1,11 +1,9 @@
 // src/app/login/page.tsx
 "use client";
 
-import { useEffect } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
-import { Auth } from "@supabase/auth-ui-react";
-import { ThemeSupa } from "@supabase/auth-ui-shared";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,22 +12,32 @@ const supabase = createClient(
 
 export default function LoginPage() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // After login, send the user back into the app (root route will
-  // send platform owners to /owner etc. based on their profile).
-  useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        router.replace("/");
-      }
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [router]);
+    setSubmitting(false);
+
+    if (signInError) {
+      setError(signInError.message || "Unable to sign in.");
+      return;
+    }
+
+    // On success, send the user into the app root.
+    // Your root layout / home route will handle routing based on role.
+    router.replace("/");
+  };
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50 flex items-center justify-center">
@@ -39,25 +47,63 @@ export default function LoginPage() {
           Use your email and password to access the municipal dashboard.
         </p>
 
-        <Auth
-          supabaseClient={supabase}
-          view="sign_in"
-          appearance={{
-            theme: ThemeSupa,
-            variables: {
-              default: {
-                colors: {
-                  brand: "#4f46e5",
-                  brandAccent: "#6366f1",
-                  inputBorder: "#3f3f46",
-                  inputLabelText: "#e4e4e7",
-                },
-              },
-            },
-          }}
-          providers={[]}
-          onlyThirdPartyProviders={false}
-        />
+        {error && (
+          <div className="mb-3 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1">
+            <label
+              htmlFor="email"
+              className="text-xs font-medium text-zinc-300"
+            >
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              placeholder="you@example.com"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="password"
+              className="text-xs font-medium text-zinc-300"
+            >
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              placeholder="••••••••"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className={`mt-2 w-full rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
+              submitting
+                ? "border-zinc-700 bg-zinc-800 text-zinc-400 cursor-wait"
+                : "border-indigo-500 bg-indigo-600 text-white shadow-sm hover:bg-indigo-500"
+            }`}
+          >
+            {submitting ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
 
         <p className="mt-3 text-center text-xs text-zinc-500">
           No self-signups. Contact your administrator for access.
