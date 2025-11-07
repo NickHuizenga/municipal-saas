@@ -1,43 +1,59 @@
 // src/app/login/page.tsx
-"use client";
+import { redirect } from "next/navigation";
+import { getSupabaseServer } from "@/lib/supabaseServer";
 
-import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+export const revalidate = 0;
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+async function handleLogin(formData: FormData) {
+  "use server";
 
-export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const supabase = getSupabaseServer();
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSubmitting(true);
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const password = String(formData.get("password") ?? "");
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+  if (!email || !password) {
+    redirect("/login?error=missing");
+  }
 
-    setSubmitting(false);
+  const { error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-    if (signInError) {
-      setError(signInError.message || "Unable to sign in.");
-      return;
-    }
+  if (error) {
+    console.error("Login error:", error.message);
+    redirect("/login?error=invalid");
+  }
 
-    // On success, send the user into the app root.
-    // Your existing routing logic from "/" will decide where they land.
-    router.replace("/");
-  };
+  // On success, go to the root router, which will send you to /owner or /tenant/select
+  redirect("/");
+}
+
+type LoginPageProps = {
+  searchParams?: { [key: string]: string | string[] | undefined };
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const supabase = getSupabaseServer();
+
+  // If already logged in, skip login page
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session) {
+    redirect("/");
+  }
+
+  const errorKey = searchParams?.error as string | undefined;
+  let errorMessage: string | null = null;
+
+  if (errorKey === "missing") {
+    errorMessage = "Please enter both email and password.";
+  } else if (errorKey === "invalid") {
+    errorMessage = "Invalid email or password.";
+  }
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50 flex items-center justify-center">
@@ -47,13 +63,13 @@ export default function LoginPage() {
           Use your email and password to access the municipal dashboard.
         </p>
 
-        {error && (
+        {errorMessage && (
           <div className="mb-3 rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-200">
-            {error}
+            {errorMessage}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form action={handleLogin} className="space-y-4">
           <div className="space-y-1">
             <label
               htmlFor="email"
@@ -63,11 +79,10 @@ export default function LoginPage() {
             </label>
             <input
               id="email"
+              name="email"
               type="email"
               autoComplete="email"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
               className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               placeholder="you@example.com"
             />
@@ -82,11 +97,10 @@ export default function LoginPage() {
             </label>
             <input
               id="password"
+              name="password"
               type="password"
               autoComplete="current-password"
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
               className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               placeholder="••••••••"
             />
@@ -94,14 +108,9 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={submitting}
-            className={`mt-2 w-full rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
-              submitting
-                ? "border-zinc-700 bg-zinc-800 text-zinc-400 cursor-wait"
-                : "border-indigo-500 bg-indigo-600 text-white shadow-sm hover:bg-indigo-500"
-            }`}
+            className="mt-2 w-full rounded-xl border border-indigo-500 bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500"
           >
-            {submitting ? "Signing in..." : "Sign in"}
+            Sign in
           </button>
         </form>
 
