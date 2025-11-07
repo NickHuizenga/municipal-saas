@@ -53,28 +53,39 @@ export async function getTenantContext(): Promise<TenantContext> {
   // Profile → platform owner?
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, is_platform_owner")
+    .select("is_platform_owner")
     .eq("id", userId)
     .maybeSingle();
 
   const isPlatformOwner = profile?.is_platform_owner === true;
 
-  // Tenant membership + tenant name
+  // Tenant membership for this user
   const { data: membership } = await supabase
     .from("tenant_memberships")
-    .select("role, tenants(name)")
+    .select("role")
     .eq("tenant_id", tenantId)
     .eq("user_id", userId)
     .maybeSingle();
 
   const tenantRole = membership?.role ?? null;
-  const tenantName =
-    (membership as any)?.tenants?.name || "(Selected Tenant)";
 
   // If they aren't platform_owner AND not a member of this tenant → bounce
   if (!isPlatformOwner && !tenantRole) {
     redirect("/tenant/select");
   }
+
+  // Tenant name (simple direct lookup)
+  const { data: tenantRow, error: tenantError } = await supabase
+    .from("tenants")
+    .select("name")
+    .eq("id", tenantId)
+    .maybeSingle();
+
+  if (tenantError) {
+    console.error("Error loading tenant in getTenantContext:", tenantError);
+  }
+
+  const tenantName = tenantRow?.name ?? "(Selected Tenant)";
 
   // Enabled modules for this tenant
   const { data: modules, error: modulesError } = await supabase
@@ -100,7 +111,10 @@ export async function getTenantContext(): Promise<TenantContext> {
     .eq("enabled", true);
 
   if (accessError) {
-    console.error("Error loading user_module_access in getTenantContext:", accessError);
+    console.error(
+      "Error loading user_module_access in getTenantContext:",
+      accessError
+    );
   }
 
   const accessMap = new Map<string, boolean>();
