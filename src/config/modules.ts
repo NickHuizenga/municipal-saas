@@ -1,5 +1,4 @@
 // src/config/modules.ts
-
 export type ModuleCategory =
   | "public_works"
   | "utilities"
@@ -7,202 +6,198 @@ export type ModuleCategory =
   | "finance"
   | "planning"
   | "community"
-  | "admin";
+  | "admin"
+  | "other";
 
-export type SubmoduleKey = string;
+export type ModuleKey =
+  | "work_orders"
+  | "water_system"
+  | "wastewater_system"
+  | "stormwater_system"
+  | "streets"
+  | "fleet"
+  | "budget_tracker"
+  | "facilities"
+  | "electric_system"
+  | "solid_waste"
+  | "sampling_compliance"
+  | "dmr_reporting"
+  | "mft_tracker"
+  | "grant_management"
+  | "capital_projects"
+  | "asset_inventory"
+  | "asset_management"
+  | "resident_requests"
+  | "permits"
+  | "code_enforcement"
+  | "cemetery"
+  | "parks"
+  | "marina"
+  | "time_cards"
+  | "sidewalks"
+  | "searchable_documents"
+  | "safety"
+  | "staffing"
+  | "dashboards";
 
-export type ModuleDefinition = {
-  label: string;
-  category: ModuleCategory;
-  description?: string;
-  submodules?: {
-    key: SubmoduleKey;
-    label: string;
-    description?: string;
-  }[];
-};
-
-export const MODULE_DEFINITIONS = {
+export const MODULE_DEFINITIONS: Record<
+  ModuleKey,
+  { label: string; description?: string; category: ModuleCategory }
+> = {
   work_orders: {
     label: "Work Orders",
+    description: "Manage maintenance and repair tasks across departments.",
     category: "public_works",
-    description: "General work orders and maintenance tasks.",
-    submodules: [
-      { key: "water_distribution", label: "Water Distribution" },
-      { key: "wastewater_collection", label: "Wastewater Collection" },
-      { key: "streets_surface", label: "Street Surface" },
-      { key: "facilities_maintenance", label: "Facilities Maintenance" },
-      { key: "parks_maintenance", label: "Parks Maintenance" },
-    ],
   },
   water_system: {
     label: "Water System",
+    description: "Monitor wells, pumps, and water infrastructure.",
     category: "utilities",
-    description: "Wells, towers, distribution, and service lines.",
-    submodules: [
-      { key: "source_wells", label: "Source Wells" },
-      { key: "storage_tanks", label: "Storage Tanks & Towers" },
-      { key: "distribution_valves", label: "Distribution Valves" },
-      { key: "hydrants", label: "Hydrants" },
-      { key: "service_lines", label: "Service Lines" },
-    ],
   },
   wastewater_system: {
     label: "Wastewater System",
+    description: "Track plant operations, lift stations, and DMR reporting.",
     category: "utilities",
-    description: "Collection system, lift stations, and treatment.",
   },
-  stormwater: {
-    label: "Stormwater",
-    category: "public_works",
-    description: "Ditches, culverts, intakes, and storm conveyance.",
+  stormwater_system: {
+    label: "Stormwater System",
+    description: "Inspect and maintain storm drains and retention areas.",
+    category: "utilities",
   },
   streets: {
-    label: "Streets & Sidewalks",
+    label: "Streets",
+    description: "Street repairs, signage, and seasonal operations.",
     category: "public_works",
-    description: "Street surfaces, alleys, sidewalks.",
   },
   fleet: {
-    label: "Fleet & Equipment",
+    label: "Fleet Management",
+    description: "Track and schedule maintenance for vehicles and equipment.",
     category: "public_works",
-    description: "Vehicles and heavy equipment.",
+  },
+  budget_tracker: {
+    label: "Budget Tracker",
+    description: "Monitor expenses and funding across departments.",
+    category: "finance",
   },
   facilities: {
-    label: "Buildings & Facilities",
-    category: "public_works",
-    description: "Village hall, PW shop, and public buildings.",
+    label: "Facilities",
+    description: "Manage municipal buildings, maintenance, and inspections.",
+    category: "planning",
   },
-  electric_utility: {
-    label: "Electric Utility",
+  electric_system: {
+    label: "Electric System",
+    description: "Track electrical grid assets and maintenance records.",
     category: "utilities",
-    description: "Local electric distribution system.",
-  },
-  gas_utility: {
-    label: "Natural Gas Utility",
-    category: "utilities",
-    description: "Municipal natural gas utility (where applicable).",
   },
   solid_waste: {
-    label: "Solid Waste & Recycling",
+    label: "Solid Waste",
+    description: "Track garbage collection and landfill operations.",
     category: "utilities",
-    description: "Garbage, recycling, and yard waste.",
   },
   sampling_compliance: {
     label: "Sampling & Compliance",
+    description: "Record water and wastewater sampling data.",
     category: "compliance",
-    description: "Water & wastewater sampling schedules and results.",
   },
   dmr_reporting: {
-    label: "DMR & IEPA Reporting",
+    label: "DMR Reporting",
+    description: "Submit and review Discharge Monitoring Reports.",
     category: "compliance",
-    description: "Discharge Monitoring Reports and regulatory filings.",
   },
   mft_tracker: {
     label: "MFT Tracker",
+    description: "Track Motor Fuel Tax projects and expenditures.",
     category: "finance",
-    description: "Motor Fuel Tax projects and expenditures.",
   },
-  grants: {
-    label: "Grants & Funding",
+  grant_management: {
+    label: "Grant Management",
+    description: "Track grant applications, deadlines, and funds.",
     category: "finance",
-    description: "Grant applications, awards, and reporting.",
   },
   capital_projects: {
     label: "Capital Projects",
+    description: "Track progress, budgets, and documentation for projects.",
     category: "planning",
-    description: "Large multi-year infrastructure projects.",
   },
   asset_inventory: {
-    label: "Asset & Inventory",
+    label: "Asset Inventory",
+    description: "Catalog and locate all municipal assets.",
     category: "planning",
-    description: "Inventory of critical infrastructure and parts.",
   },
-  citizen_requests: {
-    label: "Citizen Requests / 311",
+  asset_management: {
+    label: "Asset Management",
+    description: "Track condition, depreciation, and replacement schedules.",
+    category: "planning",
+  },
+  resident_requests: {
+    label: "Resident Requests",
+    description: "Handle requests and complaints from residents.",
     category: "community",
-    description: "Resident-submitted service requests.",
   },
   permits: {
-    label: "Permits & Inspections",
+    label: "Permits",
+    description: "Track issued and pending building or utility permits.",
     category: "community",
-    description: "ROW permits, utility taps, and inspections.",
   },
   code_enforcement: {
     label: "Code Enforcement",
+    description: "Document violations and enforcement actions.",
     category: "community",
-    description: "Nuisance, weed, and property maintenance violations.",
   },
   cemetery: {
     label: "Cemetery Management",
+    description: "Maintain plot records and work orders for cemetery grounds.",
     category: "community",
-    description: "Plots, burials, and cemetery maintenance.",
   },
-  parks_rec: {
-    label: "Parks & Recreation",
+  parks: {
+    label: "Parks",
+    description: "Manage park facilities, maintenance, and events.",
     category: "community",
-    description: "Parks, trails, and recreation programs.",
   },
-  documents: {
-    label: "Documents & Policies",
-    category: "admin",
-    description: "Internal documents, SOPs, and policies.",
+  marina: {
+    label: "Marina",
+    description: "Track slip rentals, maintenance, and seasonal use.",
+    category: "community",
   },
-  safety_training: {
-    label: "Safety & Training",
+  time_cards: {
+    label: "Time Cards",
+    description: "Track employee hours and assignments.",
     category: "admin",
-    description: "Training records and safety meetings.",
+  },
+  sidewalks: {
+    label: "Sidewalks",
+    description: "Monitor sidewalk repair, replacement, and accessibility.",
+    category: "public_works",
+  },
+  searchable_documents: {
+    label: "Searchable Documents",
+    description: "Central repository for indexed and searchable records.",
+    category: "admin",
+  },
+  safety: {
+    label: "Safety",
+    description: "Record safety inspections, training, and incidents.",
+    category: "admin",
   },
   staffing: {
-    label: "Staffing & Schedules",
+    label: "Staffing",
+    description: "Manage personnel assignments and contact info.",
     category: "admin",
-    description: "Schedules, on-call rotations, and staffing.",
   },
   dashboards: {
-    label: "Dashboards & Analytics",
+    label: "Dashboards",
+    description: "Cross-department analytics and visualization hub.",
     category: "admin",
-    description: "Cross-module analytics and summary dashboards.",
   },
-} as const;
-
-export type ModuleKey = keyof typeof MODULE_DEFINITIONS;
-
-// Type guard so we can safely narrow a string into ModuleKey
-export function isModuleKey(value: string): value is ModuleKey {
-  return Object.prototype.hasOwnProperty.call(MODULE_DEFINITIONS, value);
-}
-
-/**
- * Route mapping for each module key.
- * You can change these paths later; this just centralizes them.
- */
-export const MODULE_ROUTES: Partial<Record<ModuleKey, string>> = {
-  work_orders: "/modules/work-orders",
-  water_system: "/modules/water-system",
-  wastewater_system: "/modules/wastewater-system",
-  stormwater: "/modules/stormwater",
-  streets: "/modules/streets",
-  fleet: "/modules/fleet",
-  facilities: "/modules/facilities",
-  electric_utility: "/modules/electric-utility",
-  gas_utility: "/modules/gas-utility",
-  solid_waste: "/modules/solid-waste",
-
-  sampling_compliance: "/modules/sampling-compliance",
-  dmr_reporting: "/modules/dmr-reporting",
-  mft_tracker: "/modules/mft-tracker",
-  grants: "/modules/grants",
-
-  capital_projects: "/modules/capital-projects",
-  asset_inventory: "/modules/asset-inventory",
-
-  citizen_requests: "/modules/citizen-requests",
-  permits: "/modules/permits",
-  code_enforcement: "/modules/code-enforcement",
-  cemetery: "/modules/cemetery",
-  parks_rec: "/modules/parks-rec",
-
-  documents: "/modules/documents",
-  safety_training: "/modules/safety-training",
-  staffing: "/modules/staffing",
-  dashboards: "/modules/dashboards",
 };
+
+export const MODULE_ROUTES: Record<ModuleKey, string> = Object.keys(
+  MODULE_DEFINITIONS
+).reduce((acc, key) => {
+  acc[key as ModuleKey] = `/tenant/modules/${key}`;
+  return acc;
+}, {} as Record<ModuleKey, string>);
+
+export function isModuleKey(value: string): value is ModuleKey {
+  return value in MODULE_DEFINITIONS;
+}
