@@ -30,7 +30,14 @@ type DisplayModule = AllowedModule & {
 export default async function TenantHomePage() {
   const ctx = await getTenantContext();
 
-  const { tenantName, tenantRole, tenantId, allowedModules } = ctx;
+  const {
+    tenantName,
+    tenantRole,
+    tenantId,
+    allowedModules,
+    tenantHasModules,
+    userHasAnyModuleAccess,
+  } = ctx;
 
   const displayModules: DisplayModule[] = allowedModules.map((mod) => {
     let route: string | undefined;
@@ -60,7 +67,7 @@ export default async function TenantHomePage() {
     modulesByCategory[mod.category].push(mod);
   }
 
-  const hasAnyModules = displayModules.length > 0;
+  const showModulesGrid = tenantHasModules && userHasAnyModuleAccess;
 
   return (
     <main className="p-6 space-y-6">
@@ -100,15 +107,21 @@ export default async function TenantHomePage() {
           <h2 className="text-sm font-semibold text-zinc-100">
             Modules for this Tenant
           </h2>
-          {!hasAnyModules && (
+          {!tenantHasModules && (
             <span className="text-xs text-zinc-500">
-              No modules enabled yet. An admin can turn them on from the
-              Tenant Admin Dashboard.
+              No modules are configured for this tenant yet. An owner or
+              admin can enable modules from the Tenant Admin Dashboard.
+            </span>
+          )}
+          {tenantHasModules && !userHasAnyModuleAccess && (
+            <span className="text-xs text-zinc-500">
+              You currently don&apos;t have access to any modules for this
+              tenant. Contact an owner or admin if this seems wrong.
             </span>
           )}
         </div>
 
-        {hasAnyModules ? (
+        {showModulesGrid ? (
           <div className="space-y-5">
             {(Object.keys(modulesByCategory) as Array<
               ModuleCategory | "other"
@@ -160,8 +173,9 @@ export default async function TenantHomePage() {
           </div>
         ) : (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 text-xs text-zinc-400">
-            No modules are currently enabled for this tenant. An owner or
-            admin can enable modules from the Tenant Admin Dashboard.
+            {!tenantHasModules
+              ? "No modules are currently configured for this tenant. An owner or admin can enable modules from the Tenant Admin Dashboard."
+              : "You currently don't have access to any modules for this tenant. If this seems incorrect, contact a tenant owner or admin."}
           </div>
         )}
       </section>
