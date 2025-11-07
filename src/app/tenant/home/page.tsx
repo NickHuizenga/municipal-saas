@@ -1,199 +1,250 @@
 // src/app/tenant/home/page.tsx
-
-import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import Header from "@/components/header";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import {
-  MODULES,
-  type ModuleId,
-  computeDailySummaryForUser,
-} from "@/lib/modules";
-import {
-  computeEffectiveModulesForMember,
-  type MemberModuleAccessRow,
-  type TenantFeatureFlags,
-} from "@/lib/access";
+  MODULE_DEFINITIONS,
+  isModuleKey,
+  ModuleKey,
+  ModuleCategory,
+} from "@/config/modules";
 
-const TENANT_COOKIE_NAME =
-  process.env.TENANT_COOKIE_NAME || "tenant_id";
-
-export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const CATEGORY_LABELS: Record<ModuleCategory | "other", string> = {
+  public_works: "Public Works",
+  utilities: "Utilities",
+  compliance: "Compliance & Reporting",
+  finance: "Financial & Funding",
+  planning: "Planning & Assets",
+  community: "Community-Facing",
+  admin: "Admin & Internal",
+  other: "Other",
+};
+
+type DisplayModule = {
+  key: string;
+  label: string;
+  description?: string;
+  category: ModuleCategory | "other";
+};
+
 export default async function TenantHomePage() {
+  const cookieStore = cookies();
+  const tenantId = cookieStore.get("tenant_id")?.value;
+
+  if (!tenantId) {
+    redirect("/tenant/select");
+  }
+
   const supabase = getSupabaseServer();
 
-  // 1) Auth
-  const { data: auth } = await supabase.auth.getUser();
-  const user = auth?.user;
-  if (!user) redirect("/login");
-  const userId = user.id;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  // 2) Current tenant from cookie
-  const tenantId = cookies().get(TENANT_COOKIE_NAME)?.value ?? null;
-  if (!tenantId) {
-    // No tenant selected yet → send to tenant selector
-    redirect("/tenant/select");
+  if (!session) {
+    redirect("/login");
   }
 
-  // 3) Fetch tenant + features
-  const { data: tenant, error: tenantError } = await supabase
-    .from("tenants")
-    .select("id, name, features")
-    .eq("id", tenantId)
+  const authUserId = session.user.id;
+
+  // Profile → check if platform owner
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, is_platform_owner")
+    .eq("id", authUserId)
     .maybeSingle();
 
-  if (tenantError || !tenant) {
-    console.error("TenantHomePage: tenant fetch error", tenantError);
+  const isPlatformOwner = profile?.is_platform_owner === true;
+
+  // Tenant membership for this user (and tenant name via FK if configured)
+  const { data: membership } = await supabase
+    .from("tenant_memberships")
+    .select("role, tenants(name)")
+    .eq("tenant_id", tenantId)
+    .eq("user_id", authUserId)
+    .maybeSingle();
+
+  const tenantRole = membership?.role ?? null;
+  const tenantName =
+    (membership as any)?.tenants?.name || "(Selected Tenant)";
+
+  // If not platform_owner and not a member of this tenant, nope
+  if (!isPlatformOwner && !tenantRole) {
     redirect("/tenant/select");
   }
 
-  const tenantName: string = tenant.name ?? "Unnamed tenant";
-  const tenantFeatures = (tenant.features ?? {}) as TenantFeatureFlags;
-
-  // 4) Fetch member-level module access for this user in this tenant
-  const { data: accessRows, error: accessError } = await supabase
-    .from("member_module_access")
-    .select("module, enabled")
+  // Enabled modules for this tenant
+  const { data: modules, error: modulesError } = await supabase
+    .from("modules")
+    .select("module_name")
     .eq("tenant_id", tenantId)
-    .eq("user_id", userId);
+    .eq("enabled", true)
+    .order("module_name", { ascending: true });
 
-  if (accessError) {
-    console.error("TenantHomePage: member_module_access error", accessError);
+  if (modulesError) {
+    console.error("Error loading modules:", modulesError);
   }
 
-  const memberAccess: MemberModuleAccessRow[] = (accessRows ?? []).map(
-    (row: any) => ({
-      module: String(row.module),
-      enabled: row.enabled,
-    })
-  );
+  const enabledModuleNames: string[] =
+    modules?.map((m) => m.module_name as string) ?? [];
 
-  // 5) Compute effective modules for this member in this tenant
-  const allModuleIds = Object.keys(MODULES) as ModuleId[];
-  const effectiveModules = computeEffectiveModulesForMember(
-    tenantFeatures,
-    memberAccess,
-    allModuleIds
-  );
+  // Per-user module access overrides (if any exist)
+  const { data: accessRows, error: accessError } = await supabase
+    .from("user_module_access")
+    .select("module_name, enabled")
+    .eq("tenant_id", tenantId)
+    .eq("user_id", authUserId)
+    .eq("enabled", true);
 
-  // 6) Ask all those modules for a daily summary
-  const todayIso = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  if (accessError) {
+    console.error("Error loading user_module_access:", accessError);
+  }
 
-  const summaries = await computeDailySummaryForUser({
-    supabase,
-    tenantId,
-    userId,
-    date: todayIso,
-    modules: effectiveModules,
+  const accessMap = new Map<string, boolean>();
+  (accessRows ?? []).forEach((row) => {
+    accessMap.set(row.module_name as string, row.enabled === true);
   });
 
+  const hasOverrides = (accessRows?.length ?? 0) > 0;
+
+  const allowedModuleNames = hasOverrides
+    ? enabledModuleNames.filter((name) => accessMap.get(name) === true)
+    : enabledModuleNames;
+
+  const displayModules: DisplayModule[] = allowedModuleNames.map((name) => {
+    if (isModuleKey(name)) {
+      const def = MODULE_DEFINITIONS[name as ModuleKey];
+      return {
+        key: name,
+        label: def.label,
+        description: def.description,
+        category: def.category,
+      };
+    }
+    return {
+      key: name,
+      label: name,
+      description: undefined,
+      category: "other",
+    };
+  });
+
+  // Group by category
+  const modulesByCategory: Record<ModuleCategory | "other", DisplayModule[]> = {
+    public_works: [],
+    utilities: [],
+    compliance: [],
+    finance: [],
+    planning: [],
+    community: [],
+    admin: [],
+    other: [],
+  };
+
+  for (const mod of displayModules) {
+    modulesByCategory[mod.category].push(mod);
+  }
+
+  const hasAnyModules = displayModules.length > 0;
+
   return (
-    <main className="mx-auto max-w-6xl p-6 space-y-6">
-      {/* Header */}
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[rgb(var(--foreground))]">
-            {tenantName}
-          </h1>
-          <p className="text-sm text-[rgb(var(--muted-foreground))]">
-            Your dashboard for this municipality.
+    <>
+      <Header />
+      <main className="p-6 space-y-6">
+        <section className="space-y-1">
+          <h1 className="text-2xl font-semibold">Tenant Home</h1>
+          <p className="text-sm text-zinc-400">
+            Tenant:{" "}
+            <span className="font-medium text-zinc-200">
+              {tenantName}
+            </span>
           </p>
-        </div>
-        <div className="text-xs text-[rgb(var(--muted-foreground))]">
-          Tenant ID:{" "}
-          <span className="font-mono">
-            {String(tenantId).slice(0, 8)}…
-          </span>
-        </div>
-      </header>
+          {tenantRole && (
+            <p className="text-xs text-zinc-500">
+              Your role for this tenant:{" "}
+              <span className="font-mono text-zinc-300">{tenantRole}</span>
+            </p>
+          )}
+        </section>
 
-      {/* Layout: main module cards + daily summary on the right on large screens */}
-      <section className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-        {/* Module cards */}
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-[rgb(var(--muted-foreground))]">
-            Modules you have access to
+        {/* Daily Summary placeholder */}
+        <section className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+          <h2 className="text-sm font-semibold text-zinc-100">
+            Daily Summary (Coming Soon)
           </h2>
+          <p className="mt-1 text-xs text-zinc-400">
+            This will be your at-a-glance overview across Work Orders,
+            Sampling, DMRs, and other enabled modules for this tenant.
+          </p>
+        </section>
 
-          {effectiveModules.length === 0 ? (
-            <div className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 text-sm text-[rgb(var(--muted-foreground))]">
-              You don&apos;t have any modules assigned yet for this tenant.
-              Contact your admin if you think this is a mistake.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {effectiveModules.map((id) => {
-                const def = MODULES[id];
+        {/* Modules by Category */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-zinc-100">
+              Modules for this Tenant
+            </h2>
+            {!hasAnyModules && (
+              <span className="text-xs text-zinc-500">
+                No modules enabled yet. An admin can turn them on from the
+                Tenant Admin Dashboard.
+              </span>
+            )}
+          </div>
+
+          {hasAnyModules ? (
+            <div className="space-y-5">
+              {(Object.keys(modulesByCategory) as Array<
+                ModuleCategory | "other"
+              >).map((categoryKey) => {
+                const mods = modulesByCategory[categoryKey];
+                if (mods.length === 0) return null;
+
                 return (
-                  <div
-                    key={id}
-                    className="flex flex-col justify-between rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 shadow-sm"
-                  >
-                    <div>
-                      <div className="text-base font-medium text-[rgb(var(--card-foreground))]">
-                        {def.label}
-                      </div>
-                      {def.description && (
-                        <p className="mt-1 text-xs text-[rgb(var(--muted-foreground))]">
-                          {def.description}
-                        </p>
-                      )}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-[rgb(var(--muted-foreground))]">
-                      <span>Enabled for you</span>
-                      {/* Placeholder for future "Go to module" links,
-                          e.g. /work-orders, /sampling, etc. */}
+                  <div key={categoryKey} className="space-y-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                      {CATEGORY_LABELS[categoryKey]}
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {mods.map((mod) => (
+                        <div
+                          key={mod.key}
+                          className="flex flex-col justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 hover:border-indigo-500 hover:bg-zinc-900/70"
+                        >
+                          <div>
+                            <div className="text-sm font-medium text-zinc-50">
+                              {mod.label}
+                            </div>
+                            {mod.description && (
+                              <p className="mt-1 text-xs text-zinc-400">
+                                {mod.description}
+                              </p>
+                            )}
+                          </div>
+                          <div className="mt-2 text-[10px] uppercase tracking-wide text-zinc-500">
+                            Module key:{" "}
+                            <span className="font-mono text-zinc-400">
+                              {mod.key}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
               })}
             </div>
+          ) : (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 text-xs text-zinc-400">
+              No modules are currently enabled for this tenant. An owner or
+              admin can enable modules from the Tenant Admin Dashboard.
+            </div>
           )}
-        </div>
-
-        {/* Daily summary card */}
-        <aside className="space-y-3">
-          <h2 className="text-sm font-medium text-[rgb(var(--muted-foreground))]">
-            Daily Summary
-          </h2>
-
-          <div className="rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-4 text-sm">
-            {summaries.length === 0 ? (
-              <p className="text-[rgb(var(--muted-foreground))]">
-                No summary available yet. As modules (like DMR and Water
-                Reports) add summary logic, you&apos;ll see a daily overview
-                here.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {summaries.map((s) => {
-                  const def = MODULES[s.module];
-                  return (
-                    <div key={s.module}>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold text-[rgb(var(--card-foreground))]">
-                          {s.title || def.label}
-                        </div>
-                        {typeof s.alerts === "number" && s.alerts > 0 && (
-                          <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[0.65rem] font-semibold text-red-500">
-                            {s.alerts} alert{s.alerts === 1 ? "" : "s"}
-                          </span>
-                        )}
-                      </div>
-                      <ul className="mt-1 list-disc pl-4 text-xs text-[rgb(var(--muted-foreground))]">
-                        {s.lines.map((line, idx) => (
-                          <li key={idx}>{line}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </aside>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }
