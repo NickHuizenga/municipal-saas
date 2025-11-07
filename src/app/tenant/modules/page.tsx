@@ -45,9 +45,7 @@ export default async function TenantModulesPage() {
     tenantRole != null && ["owner", "admin"].includes(tenantRole);
 
   if (!isPlatformOwner && !isTenantAdminOrOwner) {
-    // Non-admins shouldn’t be here
-    // Tenant Home is their landing page
-    // (getTenantContext already ensures membership)
+    // Non-admins shouldn’t be here; getTenantContext already guarantees membership.
     return null;
   }
 
@@ -109,16 +107,16 @@ export default async function TenantModulesPage() {
 
   return (
     <main className="p-6 space-y-6">
-      {/* Heading stays at top; sticky Save button lives just below via ModuleSettingsForm */}
+      {/* Heading: tenant name + ID + page description */}
       <section className="space-y-1">
-        <h1 className="text-2xl font-semibold">Module Settings</h1>
-        <p className="text-sm text-zinc-400">
-          Tenant:{" "}
-          <span className="font-medium text-zinc-200">{tenantName}</span>
+        <h1 className="text-2xl font-semibold">{tenantName}</h1>
+        <p className="text-xs text-zinc-500">
+          Tenant ID:{" "}
+          <span className="font-mono text-zinc-300">{tenantId}</span>
         </p>
         <p className="text-xs text-zinc-500">
-          Turn modules on or off for this municipality. Per-user permissions are
-          controlled separately in the Tenant Admin Dashboard.
+          Module Settings · Turn modules on or off for this municipality. Per-user
+          permissions are controlled separately in the Tenant Admin Dashboard.
         </p>
       </section>
 
