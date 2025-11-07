@@ -96,8 +96,10 @@ async function updateUserModuleAccess(formData: FormData) {
     for (const mod of modules) {
       const moduleName = mod.module_name as string;
       const key = `access__${member.user_id}__${moduleName}`;
-      const value = formData.get(key);
-      const enabled = value === "on"; // checkbox is present only if checked
+      const value = formData.get(key) as string | null;
+
+      // Dropdown values: "enabled" | "disabled"
+      const enabled = value === "enabled";
 
       updates.push({
         tenant_id: tenantId,
@@ -154,10 +156,10 @@ export default async function TenantAdminPage() {
 
   const isPlatformOwner = profile?.is_platform_owner === true;
 
-  // Tenant membership for this user (and tenant name via FK if configured)
+  // Tenant membership for this user
   const { data: membership } = await supabase
-    .from("tenant_memberships")
-    .select("role, tenants(name)")
+    .from("tenant_membersments")
+    .select("role")
     .eq("tenant_id", tenantId)
     .eq("user_id", authUserId)
     .maybeSingle();
@@ -170,8 +172,14 @@ export default async function TenantAdminPage() {
     redirect("/tenant/home");
   }
 
-  const tenantName =
-    (membership as any)?.tenants?.name || "(Selected Tenant)";
+  // Tenant name (simple lookup)
+  const { data: tenantRow } = await supabase
+    .from("tenants")
+    .select("name")
+    .eq("id", tenantId)
+    .maybeSingle();
+
+  const tenantName = tenantRow?.name ?? "(Selected Tenant)";
 
   // All members in this tenant with profile info
   const { data: members, error: membersError } = await supabase
@@ -196,12 +204,12 @@ export default async function TenantAdminPage() {
     console.error("Error loading modules:", modulesError);
   }
 
-  // Existing user-module access flags (only enabled = true)
+  // Existing user-module access flags (we read all, not just enabled=true,
+  // so we can show "Disabled" as a real state instead of "no row")
   const { data: accessRows, error: accessError } = await supabase
     .from("user_module_access")
     .select("user_id, module_name, enabled")
-    .eq("tenant_id", tenantId)
-    .eq("enabled", true);
+    .eq("tenant_id", tenantId);
 
   if (accessError) {
     console.error("Error loading user_module_access:", accessError);
@@ -232,7 +240,7 @@ export default async function TenantAdminPage() {
       email: (m as any).profiles?.email ?? "",
     })) ?? [];
 
-  // Build a quick lookup map: "userId__moduleName" -> true
+  // Build a lookup: "userId__moduleName" -> enabled:boolean
   const accessMap = new Map<string, boolean>();
   (accessRows ?? []).forEach((row) => {
     const key = `${row.user_id}__${row.module_name}`;
@@ -315,18 +323,21 @@ export default async function TenantAdminPage() {
                         const moduleName = module.key;
                         const key = `${member.userId}__${moduleName}`;
                         const enabled = accessMap.get(key) ?? false;
+                        const fieldName = `access__${member.userId}__${moduleName}`;
 
                         return (
                           <td
                             key={moduleName}
                             className="px-3 py-3 text-center align-middle"
                           >
-                            <input
-                              type="checkbox"
-                              name={`access__${member.userId}__${moduleName}`}
-                              defaultChecked={enabled}
-                              className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-indigo-500 focus:ring-indigo-500"
-                            />
+                            <select
+                              name={fieldName}
+                              defaultValue={enabled ? "enabled" : "disabled"}
+                              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            >
+                              <option value="enabled">Enabled</option>
+                              <option value="disabled">Disabled</option>
+                            </select>
                           </td>
                         );
                       })}
