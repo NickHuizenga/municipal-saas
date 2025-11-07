@@ -13,7 +13,7 @@ export default async function HomePage() {
     data: { session },
   } = await supabase.auth.getSession();
 
-  // If not logged in, show the existing landing card
+  // Not logged in → show landing card
   if (!session) {
     return (
       <main className="flex min-h-[calc(100vh-80px)] items-center justify-center px-4">
@@ -37,28 +37,25 @@ export default async function HomePage() {
     );
   }
 
-  // Logged-in user: decide where "Home" should send them
+  // Logged-in user: decide their "home" based on profile + tenant context
   const userId = session.user.id;
 
-  // Check if platform owner
+  // 1) Platform owner? → /owner
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", userId)
     .maybeSingle();
 
-  const isPlatformOwner = profile?.is_platform_owner === true;
-
-  if (isPlatformOwner) {
-    // Platform owner home = global owner dashboard
+  if (profile?.is_platform_owner) {
     redirect("/owner");
   }
 
+  // 2) Not a platform owner → consider tenant cookie
   const cookieStore = cookies();
   const tenantId = cookieStore.get("tenant_id")?.value ?? null;
 
   if (tenantId) {
-    // See if the user is a member of this tenant and what their role is
     const { data: membership } = await supabase
       .from("tenant_memberships")
       .select("role")
@@ -74,11 +71,9 @@ export default async function HomePage() {
         redirect("/tenant/home");
       }
     }
-
-    // Stale tenant cookie (no membership) – fall through to tenant selection
+    // If cookie points at a tenant where they’re not a member, fall through.
   }
 
-  // No tenant cookie, or not a member of the cookie tenant:
-  // send to tenant selector to pick a municipality
+  // 3) No tenant selected / no valid membership → go pick a municipality
   redirect("/tenant/select");
 }
