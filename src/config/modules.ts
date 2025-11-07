@@ -170,3 +170,39 @@ export type ModuleKey = keyof typeof MODULE_DEFINITIONS;
 export function isModuleKey(value: string): value is ModuleKey {
   return Object.prototype.hasOwnProperty.call(MODULE_DEFINITIONS, value);
 }
+
+/**
+ * Route mapping for each module key.
+ * You can change these paths later; this just centralizes them.
+ */
+export const MODULE_ROUTES: Partial<Record<ModuleKey, string>> = {
+  work_orders: "/modules/work-orders",
+  water_system: "/modules/water-system",
+  wastewater_system: "/modules/wastewater-system",
+  stormwater: "/modules/stormwater",
+  streets: "/modules/streets",
+  fleet: "/modules/fleet",
+  facilities: "/modules/facilities",
+  electric_utility: "/modules/electric-utility",
+  gas_utility: "/modules/gas-utility",
+  solid_waste: "/modules/solid-waste",
+
+  sampling_compliance: "/modules/sampling-compliance",
+  dmr_reporting: "/modules/dmr-reporting",
+  mft_tracker: "/modules/mft-tracker",
+  grants: "/modules/grants",
+
+  capital_projects: "/modules/capital-projects",
+  asset_inventory: "/modules/asset-inventory",
+
+  citizen_requests: "/modules/citizen-requests",
+  permits: "/modules/permits",
+  code_enforcement: "/modules/code-enforcement",
+  cemetery: "/modules/cemetery",
+  parks_rec: "/modules/parks-rec",
+
+  documents: "/modules/documents",
+  safety_training: "/modules/safety-training",
+  staffing: "/modules/staffing",
+  dashboards: "/modules/dashboards",
+};
