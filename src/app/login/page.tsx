@@ -22,21 +22,57 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
+    // 1️⃣ Sign in with Supabase (browser)
     const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim().toLowerCase(),
       password,
     });
 
-    setSubmitting(false);
-
     if (signInError) {
+      setSubmitting(false);
       setError(signInError.message || "Unable to sign in.");
       return;
     }
 
-    // On success, just go to "/" – it’s a static page for now.
-    // You can manually go to /owner or /tenant/select from there.
-    router.replace("/");
+    // 2️⃣ Get the current user
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setSubmitting(false);
+      setError(
+        "Signed in, but couldn’t load your user info. Try refreshing the page."
+      );
+      return;
+    }
+
+    // 3️⃣ Look up profile to see if you’re platform owner
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("is_platform_owner")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    setSubmitting(false);
+
+    if (profileError) {
+      console.error("Error loading profile in login:", profileError);
+      setError(
+        "Signed in, but couldn’t load your profile. Try going to /owner or /tenant/select manually."
+      );
+      return;
+    }
+
+    const isPlatformOwner = profile?.is_platform_owner === true;
+
+    // 4️⃣ Route based on role
+    if (isPlatformOwner) {
+      router.replace("/owner");
+    } else {
+      router.replace("/tenant/select");
+    }
   };
 
   return (
