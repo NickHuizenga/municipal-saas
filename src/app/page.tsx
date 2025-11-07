@@ -39,30 +39,37 @@ export default async function HomePage() {
 
   // 2) Logged in → decide their "home" based on profile + tenant context
   const userId = session.user.id;
-  const supa = supabase;
 
-  // Platform owner? → /owner
-  const { data: profile } = await supa
+  // Platform owner? → /owner (Platform Owner Dashboard)
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", userId)
     .maybeSingle();
 
+  if (profileError) {
+    console.error("Error loading profile in /page:", profileError);
+  }
+
   if (profile?.is_platform_owner) {
     redirect("/owner");
   }
 
-  // Not a platform owner → consider tenant cookie
+  // Not a platform owner → look at tenant cookie
   const cookieStore = cookies();
   const tenantId = cookieStore.get("tenant_id")?.value ?? null;
 
   if (tenantId) {
-    const { data: membership } = await supa
+    const { data: membership, error: membershipError } = await supabase
       .from("tenant_memberships")
       .select("role")
       .eq("tenant_id", tenantId)
       .eq("user_id", userId)
       .maybeSingle();
+
+    if (membershipError) {
+      console.error("Error loading membership in /page:", membershipError);
+    }
 
     if (membership) {
       const role = membership.role as string;
@@ -72,9 +79,9 @@ export default async function HomePage() {
         redirect("/tenant/home");
       }
     }
-    // If cookie points to a tenant they aren't a member of anymore, fall through.
+    // If cookie is stale (no membership), fall through.
   }
 
-  // No tenant selected / no valid membership → go pick a municipality
+  // 3) No valid tenant context → go pick a municipality
   redirect("/tenant/select");
 }
