@@ -54,17 +54,17 @@ export async function updateUserModuleAccess(formData: FormData) {
     enabled: boolean;
   }[] = [];
 
-  for (const [name, value] of formData.entries()) {
-    if (name === "tenant_id") continue;
-    if (!name.startsWith("access__")) continue;
+  formData.forEach((value, name) => {
+    if (name === "tenant_id") return;
+    if (!name.startsWith("access__")) return;
 
     // access__<userId>__<moduleName>
     const parts = name.split("__");
-    if (parts.length !== 3) continue;
+    if (parts.length !== 3) return;
 
     const userIdPart = parts[1];
     const moduleName = parts[2];
-    const enabled = (value as string) === "enabled";
+    const enabled = String(value) === "enabled";
 
     updates.push({
       tenant_id: tenantId,
@@ -72,7 +72,7 @@ export async function updateUserModuleAccess(formData: FormData) {
       module_name: moduleName,
       enabled,
     });
-  }
+  });
 
   if (updates.length > 0) {
     const { error } = await supabase
