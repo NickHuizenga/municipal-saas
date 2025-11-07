@@ -36,78 +36,56 @@ export default async function OwnerDashboardPage() {
     .maybeSingle();
 
   if (!profile?.is_platform_owner) {
-    // Not a platform owner — send them to normal tenant selection
     redirect("/tenant/select");
   }
 
-  // All tenants
-  const { data: tenants, error: tenantsError } = await supabase
+  const { data: tenants } = await supabase
     .from("tenants")
     .select("id, name")
     .order("name", { ascending: true });
 
-  if (tenantsError) {
-    console.error("Error loading tenants:", tenantsError);
-  }
-
-  // Memberships for member counts
-  const { data: memberships, error: membershipsError } = await supabase
+  const { data: memberships } = await supabase
     .from("tenant_memberships")
     .select("tenant_id, user_id");
 
-  if (membershipsError) {
-    console.error("Error loading memberships:", membershipsError);
-  }
-
-  // Enabled modules per tenant
-  const { data: modules, error: modulesError } = await supabase
+  const { data: modules } = await supabase
     .from("modules")
     .select("tenant_id, module_name, enabled")
     .eq("enabled", true);
 
-  if (modulesError) {
-    console.error("Error loading modules:", modulesError);
-  }
-
   const memberCountMap = new Map<string, number>();
-  (memberships ?? []).forEach((row) => {
-    const tid = row.tenant_id as string;
-    memberCountMap.set(tid, (memberCountMap.get(tid) ?? 0) + 1);
+  (memberships ?? []).forEach((m) => {
+    memberCountMap.set(m.tenant_id, (memberCountMap.get(m.tenant_id) ?? 0) + 1);
   });
 
-  const modulesMap = new Map<string, string[]>();
-  (modules ?? []).forEach((row) => {
-    const tid = row.tenant_id as string;
-    const list = modulesMap.get(tid) ?? [];
-    list.push(row.module_name as string);
-    modulesMap.set(tid, list);
+  const moduleMap = new Map<string, string[]>();
+  (modules ?? []).forEach((m) => {
+    const arr = moduleMap.get(m.tenant_id) ?? [];
+    arr.push(m.module_name);
+    moduleMap.set(m.tenant_id, arr);
   });
 
   const cards: OwnerTenantCard[] =
-    (tenants ?? []).map((t) => ({
-      id: t.id as string,
-      name: t.name as string,
-      memberCount: memberCountMap.get(t.id as string) ?? 0,
-      modules: modulesMap.get(t.id as string) ?? [],
+    tenants?.map((t) => ({
+      id: t.id,
+      name: t.name,
+      memberCount: memberCountMap.get(t.id) ?? 0,
+      modules: moduleMap.get(t.id) ?? [],
     })) ?? [];
 
-  const resolveModuleLabel = (key: string) => {
-    if (isModuleKey(key)) {
-      const def = MODULE_DEFINITIONS[key as ModuleKey];
-      return def.label;
-    }
-    return key;
-  };
+  const resolveModuleLabel = (key: string) =>
+    isModuleKey(key)
+      ? MODULE_DEFINITIONS[key as ModuleKey].label
+      : key;
 
   return (
     <main className="p-6 space-y-6">
-      <section className="space-y-1">
+      <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Platform Owner Dashboard</h1>
         <p className="text-sm text-zinc-400">
-          See all tenants, enabled modules, and jump into each tenant&apos;s
-          settings as platform owner.
+          See all tenants, manage users, modules, and feature access.
         </p>
-      </section>
+      </header>
 
       <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {cards.map((tenant) => (
@@ -122,19 +100,19 @@ export default async function OwnerDashboardPage() {
               <p className="text-[11px] font-mono text-zinc-500 break-all">
                 {tenant.id}
               </p>
-              <div className="text-xs text-zinc-500">
+              <p className="text-xs text-zinc-500">
                 {tenant.memberCount}{" "}
                 {tenant.memberCount === 1 ? "member" : "members"}
-              </div>
+              </p>
 
               {tenant.modules.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {tenant.modules.map((modKey) => (
+                  {tenant.modules.map((mod) => (
                     <span
-                      key={modKey}
+                      key={mod}
                       className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-200"
                     >
-                      {resolveModuleLabel(modKey)}
+                      {resolveModuleLabel(mod)}
                     </span>
                   ))}
                 </div>
@@ -145,7 +123,22 @@ export default async function OwnerDashboardPage() {
               )}
             </div>
 
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex justify-between gap-2">
+              <form action="/tenant/resolve" method="post">
+                <input type="hidden" name="tenant_id" value={tenant.id} />
+                <input
+                  type="hidden"
+                  name="redirect_to"
+                  value="/owner/tenant"
+                />
+                <button
+                  type="submit"
+                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:border-indigo-500 hover:bg-zinc-900/80"
+                >
+                  Manage Tenant
+                </button>
+              </form>
+
               <form action="/tenant/resolve" method="post">
                 <input type="hidden" name="tenant_id" value={tenant.id} />
                 <input
