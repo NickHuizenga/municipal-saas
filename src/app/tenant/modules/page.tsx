@@ -204,18 +204,21 @@ export default async function TenantModulesPage() {
                             </p>
                           </div>
 
-                          {/* Toggle */}
+                          {/* Toggle + live status text (pure CSS via peer) */}
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] uppercase tracking-wide text-zinc-500">
-                              {mod.enabled ? "Enabled" : "Disabled"}
-                            </span>
-                            <div className="relative">
+                            <div className="relative flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 name={fieldName}
                                 defaultChecked={mod.enabled}
                                 className="peer sr-only"
                               />
+                              <span className="text-[10px] uppercase tracking-wide text-zinc-500 peer-checked:hidden">
+                                Disabled
+                              </span>
+                              <span className="hidden text-[10px] uppercase tracking-wide text-indigo-400 peer-checked:inline">
+                                Enabled
+                              </span>
                               <div className="h-5 w-9 rounded-full bg-zinc-700 peer-checked:bg-indigo-500 transition-colors flex items-center">
                                 <div className="h-4 w-4 rounded-full bg-zinc-950 shadow-sm translate-x-1 peer-checked:translate-x-4 transition-transform" />
                               </div>
