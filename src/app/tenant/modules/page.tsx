@@ -37,6 +37,7 @@ async function updateTenantModules(formData: FormData) {
   if (!tenantId) redirect("/tenant/select");
 
   const supabase = getSupabaseServer();
+
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -44,6 +45,7 @@ async function updateTenantModules(formData: FormData) {
 
   const userId = session.user.id;
 
+  // Check platform owner
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -52,6 +54,7 @@ async function updateTenantModules(formData: FormData) {
 
   const isPlatformOwner = profile?.is_platform_owner === true;
 
+  // Check tenant role
   const { data: membership } = await supabase
     .from("tenant_memberships")
     .select("role")
@@ -63,25 +66,34 @@ async function updateTenantModules(formData: FormData) {
   const isTenantAdminOrOwner =
     tenantRole != null && ["owner", "admin"].includes(tenantRole);
 
-  if (!isPlatformOwner && !isTenantAdminOrOwner) redirect("/tenant/home");
+  if (!isPlatformOwner && !isTenantAdminOrOwner) {
+    redirect("/tenant/home");
+  }
 
+  // Read toggle values: presence of checkbox => enabled
   const updates: { tenant_id: string; module_name: string; enabled: boolean }[] =
     [];
 
   const moduleKeys = Object.keys(MODULE_DEFINITIONS) as ModuleKey[];
 
   for (const key of moduleKeys) {
-    const fieldName = `module__${key}`;
-    const value = formData.get(fieldName) as string | null;
-    const enabled = value === "enabled";
-    updates.push({ tenant_id: tenantId, module_name: key, enabled });
+    const fieldName = `module__${key}__enabled`;
+    const isChecked = formData.get(fieldName) != null;
+    updates.push({
+      tenant_id: tenantId,
+      module_name: key,
+      enabled: isChecked,
+    });
   }
 
   if (updates.length > 0) {
     const { error } = await supabase
       .from("modules")
       .upsert(updates, { onConflict: "tenant_id,module_name" });
-    if (error) console.error("Error updating tenant modules:", error);
+
+    if (error) {
+      console.error("Error updating tenant modules:", error);
+    }
   }
 
   redirect("/tenant/modules");
@@ -93,25 +105,31 @@ export default async function TenantModulesPage() {
   const { tenantId, tenantName, tenantRole, isPlatformOwner } = ctx;
 
   const supabase = getSupabaseServer();
+
   const isTenantAdminOrOwner =
     tenantRole != null && ["owner", "admin"].includes(tenantRole);
 
-  if (!isPlatformOwner && !isTenantAdminOrOwner) redirect("/tenant/home");
+  if (!isPlatformOwner && !isTenantAdminOrOwner) {
+    redirect("/tenant/home");
+  }
 
+  // Load current module flags for this tenant
   const { data: moduleRows, error } = await supabase
     .from("modules")
     .select("module_name, enabled")
     .eq("tenant_id", tenantId);
 
-  if (error) console.error("Error loading modules:", error);
+  if (error) {
+    console.error("Error loading modules:", error);
+  }
 
   const enabledMap = new Map<string, boolean>();
   (moduleRows ?? []).forEach((row) => {
     enabledMap.set(row.module_name as string, row.enabled === true);
   });
 
+  // Build canonical list from definitions
   const allKeys = Object.keys(MODULE_DEFINITIONS) as ModuleKey[];
-
   const modules: ModuleRow[] = allKeys.map((key) => {
     const def = MODULE_DEFINITIONS[key];
     const enabled = enabledMap.get(key) ?? false;
@@ -124,6 +142,7 @@ export default async function TenantModulesPage() {
     };
   });
 
+  // Group by category
   const grouped: Record<ModuleCategory | "other", ModuleRow[]> = {
     public_works: [],
     utilities: [],
@@ -134,10 +153,12 @@ export default async function TenantModulesPage() {
     admin: [],
     other: [],
   };
+
   modules.forEach((m) => grouped[m.category].push(m));
 
   return (
     <main className="p-6 space-y-6">
+      {/* Heading */}
       <section className="space-y-1">
         <h1 className="text-2xl font-semibold">Module Settings</h1>
         <p className="text-sm text-zinc-400">
@@ -145,8 +166,8 @@ export default async function TenantModulesPage() {
           <span className="font-medium text-zinc-200">{tenantName}</span>
         </p>
         <p className="text-xs text-zinc-500">
-          Use this page to turn modules on or off for this municipality. Per-user
-          access is managed separately in the Tenant Admin Dashboard.
+          Turn modules on or off for this municipality. Per-user permissions are
+          controlled separately in the Tenant Admin Dashboard.
         </p>
       </section>
 
@@ -162,40 +183,51 @@ export default async function TenantModulesPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {list.map((mod) => {
-                  const fieldName = `module__${mod.key}`;
-                  const defaultValue = mod.enabled ? "enabled" : "disabled";
+                  const fieldName = `module__${mod.key}__enabled`;
                   return (
-                    <div
+                    <label
                       key={mod.key}
-                      className={`relative flex flex-col justify-between rounded-xl border ${
+                      className={`flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition ${
                         mod.enabled
-                          ? "border-indigo-500/60 bg-zinc-900/70"
-                          : "border-zinc-800 bg-zinc-950/50"
-                      } p-4 hover:border-indigo-400/70 transition`}
+                          ? "border-indigo-500/70 bg-zinc-900/80"
+                          : "border-zinc-800 bg-zinc-950/60 hover:border-zinc-700"
+                      }`}
                     >
                       <div>
-                        <h3 className="text-sm font-semibold text-zinc-100">
-                          {mod.label}
-                        </h3>
-                        <p className="mt-1 text-[10px] font-mono uppercase text-zinc-500">
-                          {mod.key}
-                        </p>
-                        <p className="mt-2 text-xs text-zinc-400 leading-snug">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h3 className="text-sm font-semibold text-zinc-100">
+                              {mod.label}
+                            </h3>
+                            <p className="mt-1 text-[10px] font-mono uppercase text-zinc-500">
+                              {mod.key}
+                            </p>
+                          </div>
+
+                          {/* Toggle */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+                              {mod.enabled ? "Enabled" : "Disabled"}
+                            </span>
+                            <div className="relative">
+                              <input
+                                type="checkbox"
+                                name={fieldName}
+                                defaultChecked={mod.enabled}
+                                className="peer sr-only"
+                              />
+                              <div className="h-5 w-9 rounded-full bg-zinc-700 peer-checked:bg-indigo-500 transition-colors flex items-center">
+                                <div className="h-4 w-4 rounded-full bg-zinc-950 shadow-sm translate-x-1 peer-checked:translate-x-4 transition-transform" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="mt-3 text-xs text-zinc-400 leading-snug">
                           {mod.description ?? "—"}
                         </p>
                       </div>
-
-                      <div className="mt-4 flex justify-end">
-                        <select
-                          name={fieldName}
-                          defaultValue={defaultValue}
-                          className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        >
-                          <option value="enabled">Enabled</option>
-                          <option value="disabled">Disabled</option>
-                        </select>
-                      </div>
-                    </div>
+                    </label>
                   );
                 })}
               </div>
