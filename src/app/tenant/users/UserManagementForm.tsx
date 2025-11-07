@@ -7,7 +7,6 @@ import { updateTenantUserRoles } from "./actions";
 export type TenantUserRow = {
   userId: string;
   fullName: string;
-  email: string | null;
   role: string;
 };
 
@@ -58,9 +57,6 @@ export default function UserManagementForm({ tenantId, users }: Props) {
                 Member
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                Email
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-400">
                 Role
               </th>
             </tr>
@@ -77,9 +73,6 @@ export default function UserManagementForm({ tenantId, users }: Props) {
                     <span className="text-sm font-medium text-zinc-100">
                       {u.fullName || "Unnamed User"}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-zinc-300">
-                    {u.email ?? "—"}
                   </td>
                   <td className="px-4 py-3">
                     <select
