@@ -41,7 +41,7 @@ export async function inviteUser(formData: FormData) {
     redirect("/invite?error=missing");
   }
 
-  // --- Permission check: platform owner OR owner/admin for that tenant ---
+  // --- Permission check: platform owner OR owner/admin of that tenant ---
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -71,8 +71,7 @@ export async function inviteUser(formData: FormData) {
   let userId: string | null = null;
 
   try {
-    // NOTE: listUsers in v2 only accepts { page, perPage }.
-    // We'll fetch the first page and search by email in code.
+    // listUsers only supports { page, perPage } in v2, so we filter by email ourselves
     const { data: listData, error: listErr } =
       await adminSupabase.auth.admin.listUsers({
         page: 1,
