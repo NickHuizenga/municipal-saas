@@ -41,7 +41,7 @@ export async function inviteUser(formData: FormData) {
     redirect("/invite?error=missing");
   }
 
-  // --- Permission check: platform owner OR owner/admin of that tenant ---
+  // --- Permission check: platform owner OR owner/admin for that tenant ---
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -66,24 +66,27 @@ export async function inviteUser(formData: FormData) {
     redirect("/tenant/home");
   }
 
-  // --- Find or create auth user via Admin API (Supabase JS v2 style) ---
+  // --- Find or create auth user via Admin API ---
 
   let userId: string | null = null;
 
   try {
-    // Try to find existing user by email
+    // NOTE: listUsers in v2 only accepts { page, perPage }.
+    // We'll fetch the first page and search by email in code.
     const { data: listData, error: listErr } =
       await adminSupabase.auth.admin.listUsers({
         page: 1,
-        perPage: 1,
-        email,
+        perPage: 1000,
       });
 
     if (listErr) {
-      console.error("Error listing users by email:", listErr);
+      console.error("Error listing users:", listErr);
     }
 
-    const existingUser = listData?.users?.[0];
+    const existingUser =
+      listData?.users?.find(
+        (u) => u.email && u.email.toLowerCase() === email
+      ) ?? null;
 
     if (existingUser) {
       userId = existingUser.id;
@@ -110,7 +113,7 @@ export async function inviteUser(formData: FormData) {
     redirect("/invite?error=invite_failed");
   }
 
-  // --- Upsert profile for this user (non-admin client so RLS applies) ---
+  // --- Upsert profile for this user (using app client so RLS applies) ---
 
   const { error: profileUpsertError } = await supabase
     .from("profiles")
