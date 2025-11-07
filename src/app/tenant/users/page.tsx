@@ -3,15 +3,27 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
+import { createClient } from "@supabase/supabase-js";
 import UserManagementForm, {
   TenantUserRow,
 } from "./UserManagementForm";
 
 export const revalidate = 0;
 
+// Admin client using service role key (server-side only)
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const adminSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
+
 export default async function TenantUsersPage() {
-  const supabase = getSupabaseServer();
   const cookieStore = cookies();
+  const supabase = getSupabaseServer();
 
   // 1) Require auth
   const {
@@ -24,14 +36,14 @@ export default async function TenantUsersPage() {
 
   const currentUserId = session.user.id;
 
-  // 2) Resolve tenant from cookie (this is what /tenant/resolve sets)
+  // 2) Resolve tenant from cookie (set by /tenant/resolve)
   const tenantId = cookieStore.get("tenant_id")?.value ?? null;
 
   if (!tenantId) {
     redirect("/tenant/select");
   }
 
-  // 3) Load profile to see if platform owner
+  // 3) Profile: are we platform owner?
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
@@ -40,7 +52,7 @@ export default async function TenantUsersPage() {
 
   const isPlatformOwner = profile?.is_platform_owner === true;
 
-  // 4) Load current user's membership just for this tenant (to get their role)
+  // 4) Current user's membership role for this tenant
   const { data: myMembership } = await supabase
     .from("tenant_memberships")
     .select("role")
@@ -57,7 +69,7 @@ export default async function TenantUsersPage() {
     redirect("/tenant/home");
   }
 
-  // 5) Get tenant name for header
+  // 5) Get tenant name for header (using normal client)
   const { data: tenantRow, error: tenantError } = await supabase
     .from("tenants")
     .select("name")
@@ -68,38 +80,45 @@ export default async function TenantUsersPage() {
     console.error("Error loading tenant in /tenant/users:", tenantError);
   }
 
-  const tenantName = (tenantRow?.name as string | undefined) ?? "Selected Tenant";
+  const tenantName =
+    (tenantRow?.name as string | undefined) ?? "Selected Tenant";
 
-  // 6) Get ALL memberships for this tenant
+  // 6) NOW use admin client (service role) to *bypass RLS* and read memberships
   const {
     data: membershipRows,
     error: membershipsError,
-  } = await supabase
+  } = await adminSupabase
     .from("tenant_memberships")
     .select("user_id, role")
     .eq("tenant_id", tenantId);
 
   if (membershipsError) {
-    console.error("Error loading tenant memberships:", membershipsError);
+    console.error(
+      "Admin error loading tenant memberships in /tenant/users:",
+      membershipsError
+    );
   }
 
   const memberships = membershipRows ?? [];
   const userIds = memberships.map((m: any) => m.user_id as string);
 
-  // 7) Load profiles for those users
+  // 7) Load profiles for those user IDs (also via admin client to avoid RLS issues)
   let profileMap = new Map<string, { full_name: string | null }>();
 
   if (userIds.length > 0) {
     const {
       data: profileRows,
       error: profilesError,
-    } = await supabase
+    } = await adminSupabase
       .from("profiles")
       .select("id, full_name")
       .in("id", userIds);
 
     if (profilesError) {
-      console.error("Error loading profiles for tenant users:", profilesError);
+      console.error(
+        "Admin error loading profiles for tenant users:",
+        profilesError
+      );
     }
 
     (profileRows ?? []).forEach((p: any) => {
