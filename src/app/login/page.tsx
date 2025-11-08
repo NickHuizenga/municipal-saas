@@ -5,6 +5,7 @@ import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
+// ⚠️ Client-side Supabase: uses ONLY the anon key
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -22,7 +23,6 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
 
-    // 1️⃣ Sign in with Supabase (browser)
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
@@ -34,45 +34,11 @@ export default function LoginPage() {
       return;
     }
 
-    // 2️⃣ Get the current user
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      setSubmitting(false);
-      setError(
-        "Signed in, but couldn’t load your user info. Try refreshing the page."
-      );
-      return;
-    }
-
-    // 3️⃣ Look up profile to see if you’re platform owner
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("is_platform_owner")
-      .eq("id", user.id)
-      .maybeSingle();
-
+    // Signed in successfully on the client.
+    // For now, just go to "/" (the temporary home) and you can
+    // manually hit /owner or /tenant/select from there.
     setSubmitting(false);
-
-    if (profileError) {
-      console.error("Error loading profile in login:", profileError);
-      setError(
-        "Signed in, but couldn’t load your profile. Try going to /owner or /tenant/select manually."
-      );
-      return;
-    }
-
-    const isPlatformOwner = profile?.is_platform_owner === true;
-
-    // 4️⃣ Route based on role
-    if (isPlatformOwner) {
-      router.replace("/owner");
-    } else {
-      router.replace("/tenant/select");
-    }
+    router.replace("/");
   };
 
   return (
