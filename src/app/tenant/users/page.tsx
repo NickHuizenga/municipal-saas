@@ -1,66 +1,136 @@
 // src/app/tenant/users/page.tsx
+// Shows the list of users for the *current* tenant.
+// The current tenant is chosen via /tenant/resolve, which sets a "tenant_id" cookie.
+// This page:
+// 1) Makes sure there is a session.
+// 2) Figures out which tenant from the cookie.
+// 3) Makes sure the user is allowed to see this tenant.
+// 4) Loads members from v_tenant_user_memberships using getTenantMembers.
+// 5) Renders a simple table.
+
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getSupabaseServer } from "@/lib/supabaseServer";
-import { getTenantContext } from "@/lib/tenantContext";
-import UserManagementForm, {
-  TenantUserRow,
-} from "./UserManagementForm";
+import { getTenantMembers } from "@/lib/tenantMembers";
 
 export const revalidate = 0;
 
 export default async function TenantUsersPage() {
-  const ctx = await getTenantContext();
-  const { tenantId, tenantName, tenantRole, isPlatformOwner } = ctx;
+  const cookieStore = cookies();
+  const tenantId = cookieStore.get("tenant_id")?.value;
+
+  // If no tenant is selected, send them to pick one
+  if (!tenantId) {
+    redirect("/tenant/select");
+  }
 
   const supabase = getSupabaseServer();
 
-  const isTenantAdminOrOwner =
-    tenantRole != null && ["owner", "admin"].includes(tenantRole);
+  // 1. Make sure there is a logged-in user
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  // Only platform owners or tenant owners/admins can manage users
-  if (!isPlatformOwner && !isTenantAdminOrOwner) {
-    redirect("/tenant/home");
+  if (!session) {
+    redirect("/login");
   }
 
-  // Load all members for this tenant with profile info
-  const { data: rows, error } = await supabase
-    .from("tenant_memberships")
-    .select("user_id, role, profiles(full_name, email)")
-    .eq("tenant_id", tenantId)
-    .order("role", { ascending: true });
+  const userId = session.user.id;
 
-  if (error) {
-    console.error("Error loading tenant users:", error);
+  // 2. Load the profile to see if the user is a platform owner
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_platform_owner")
+    .eq("id", userId)
+    .maybeSingle();
+
+  // 3. If not a platform owner, make sure they belong to this tenant
+  if (!profile?.is_platform_owner) {
+    const { data: membership } = await supabase
+      .from("tenant_memberships")
+      .select("tenant_id, user_id")
+      .eq("tenant_id", tenantId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!membership) {
+      // User is not a member of this tenant – send them away
+      redirect("/tenant/select");
+    }
   }
 
-  const users: TenantUserRow[] =
-    rows?.map((row: any) => ({
-      userId: row.user_id as string,
-      role: row.role as string,
-      fullName: row.profiles?.full_name ?? "",
-      email: row.profiles?.email ?? null,
-    })) ?? [];
+  // 4. Load tenant info for the header
+  const { data: tenant, error: tenantError } = await supabase
+    .from("tenants")
+    .select("id, name, created_at")
+    .eq("id", tenantId)
+    .maybeSingle();
 
-  const hasUsers = users.length > 0;
+  if (tenantError || !tenant) {
+    console.error("[TenantUsersPage] tenant not found", tenantError);
+    redirect("/tenant/select");
+  }
+
+  // 5. Load members using the unified view helper
+  const members = await getTenantMembers(tenantId);
 
   return (
-    <main className="p-6 space-y-6">
-      {/* Heading */}
-      <section className="space-y-1">
-        <h1 className="text-2xl font-semibold">{tenantName}</h1>
+    <main className="min-h-[calc(100vh-80px)] bg-zinc-950 px-6 py-6 text-zinc-50">
+      {/* Header */}
+      <section className="space-y-1 mb-4">
+        <h1 className="text-2xl font-semibold">Tenant Users</h1>
+        <p className="text-sm text-zinc-400">
+          Tenant: <span className="font-medium text-zinc-100">{tenant.name}</span>
+        </p>
         <p className="text-xs text-zinc-500">
-          Tenant User Management · Update roles for members of this municipality.
+          {members.length}{" "}
+          {members.length === 1 ? "member" : "members"} in this tenant.
         </p>
       </section>
 
-      {!hasUsers ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm text-zinc-400">
-          No users are currently assigned to this tenant. Invite users and add
-          them to this municipality to manage their roles here.
-        </div>
-      ) : (
-        <UserManagementForm tenantId={tenantId} users={users} />
-      )}
+      {/* Users Table */}
+      <section className="border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-900/80">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-900 border-b border-zinc-800">
+            <tr>
+              <th className="text-left px-4 py-2 text-xs font-medium text-zinc-400">
+                Name
+              </th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-zinc-400">
+                Email
+              </th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-zinc-400">
+                Role
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.user_id} className="border-t border-zinc-800">
+                <td className="px-4 py-2 text-sm text-zinc-100">
+                  {m.full_name ?? "(no name on profile)"}
+                </td>
+                <td className="px-4 py-2 text-sm text-zinc-300">
+                  {m.email ?? "—"}
+                </td>
+                <td className="px-4 py-2 text-sm text-zinc-200 capitalize">
+                  {m.role}
+                </td>
+              </tr>
+            ))}
+            {members.length === 0 && (
+              <tr>
+                <td
+                  colSpan={3}
+                  className="px-4 py-6 text-center text-sm text-zinc-500"
+                >
+                  No members found for this tenant.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
     </main>
   );
 }
