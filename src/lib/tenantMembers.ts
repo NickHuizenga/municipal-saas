@@ -1,4 +1,6 @@
 // src/lib/tenantMembers.ts
+// This tiny helper just loads members for a given tenant_id
+// from the view v_tenant_user_memberships.
 
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
