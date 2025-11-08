@@ -1,4 +1,9 @@
 // src/app/owner/page.tsx
+// Platform Owner Dashboard
+// Shows all tenants and how many members + which modules they have.
+// Member counts now come from the view v_tenant_user_memberships
+// so they match the tenant Users screen.
+
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabaseServer";
 import {
@@ -16,9 +21,21 @@ type OwnerTenantCard = {
   modules: string[];
 };
 
+type MembershipRow = {
+  tenant_id: string;
+  user_id: string;
+};
+
+type ModuleRow = {
+  tenant_id: string;
+  module_name: string;
+  enabled: boolean;
+};
+
 export default async function OwnerDashboardPage() {
   const supabase = getSupabaseServer();
 
+  // 1. Make sure there is a logged-in user
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -27,6 +44,7 @@ export default async function OwnerDashboardPage() {
 
   const userId = session.user.id;
 
+  // 2. Make sure this user is a platform owner
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner, full_name")
@@ -35,37 +53,41 @@ export default async function OwnerDashboardPage() {
 
   if (!profile?.is_platform_owner) redirect("/tenant/select");
 
-  // All tenants
+  // 3. Load all tenants
   const { data: tenants } = await supabase
     .from("tenants")
     .select("id, name")
     .order("name", { ascending: true });
 
-  // Membership counts
+  // 4. Load membership rows from the *view*
+  //    v_tenant_user_memberships -> tenant_id + user_id
   const { data: memberships } = await supabase
-    .from("tenant_memberships")
+    .from("v_tenant_user_memberships")
     .select("tenant_id, user_id");
 
-  // Enabled modules
+  // 5. Load enabled modules per tenant
   const { data: modules } = await supabase
     .from("modules")
     .select("tenant_id, module_name, enabled")
     .eq("enabled", true);
 
+  // Build a map of tenant_id -> member count
   const memberCountMap = new Map<string, number>();
-  (memberships ?? []).forEach((m) => {
+  (memberships as MembershipRow[] | null ?? []).forEach((m) => {
     const tid = m.tenant_id as string;
     memberCountMap.set(tid, (memberCountMap.get(tid) ?? 0) + 1);
   });
 
+  // Build a map of tenant_id -> list of module names
   const modulesMap = new Map<string, string[]>();
-  (modules ?? []).forEach((mod) => {
+  (modules as ModuleRow[] | null ?? []).forEach((mod) => {
     const tid = mod.tenant_id as string;
     const list = modulesMap.get(tid) ?? [];
     list.push(mod.module_name as string);
     modulesMap.set(tid, list);
   });
 
+  // Final list of tenants for cards
   const tenantsForCards: OwnerTenantCard[] =
     (tenants ?? []).map((t) => ({
       id: t.id,
