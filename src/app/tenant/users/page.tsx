@@ -1,12 +1,7 @@
 // src/app/tenant/users/page.tsx
-// Shows the list of users for the *current* tenant.
-// The current tenant is chosen via /tenant/resolve, which sets a "tenant_id" cookie.
-// This page:
-// 1) Makes sure there is a session.
-// 2) Figures out which tenant from the cookie.
-// 3) Makes sure the user is allowed to see this tenant.
-// 4) Loads members from v_tenant_user_memberships using getTenantMembers.
-// 5) Renders a simple table.
+// Shows users for the CURRENT tenant, using v_tenant_user_memberships.
+// This will make /tenant/users match the member counts shown on the
+// Platform Owner dashboard cards.
 
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
@@ -19,7 +14,7 @@ export default async function TenantUsersPage() {
   const cookieStore = cookies();
   const tenantId = cookieStore.get("tenant_id")?.value;
 
-  // If no tenant is selected, send them to pick one
+  // If no tenant selected, send back to tenant picker
   if (!tenantId) {
     redirect("/tenant/select");
   }
@@ -37,14 +32,14 @@ export default async function TenantUsersPage() {
 
   const userId = session.user.id;
 
-  // 2. Load the profile to see if the user is a platform owner
+  // 2. Check profile (is platform owner?)
   const { data: profile } = await supabase
     .from("profiles")
     .select("is_platform_owner")
     .eq("id", userId)
     .maybeSingle();
 
-  // 3. If not a platform owner, make sure they belong to this tenant
+  // 3. If not platform owner, make sure they belong to this tenant
   if (!profile?.is_platform_owner) {
     const { data: membership } = await supabase
       .from("tenant_memberships")
@@ -54,7 +49,6 @@ export default async function TenantUsersPage() {
       .maybeSingle();
 
     if (!membership) {
-      // User is not a member of this tenant – send them away
       redirect("/tenant/select");
     }
   }
@@ -78,9 +72,9 @@ export default async function TenantUsersPage() {
     <main className="min-h-[calc(100vh-80px)] bg-zinc-950 px-6 py-6 text-zinc-50">
       {/* Header */}
       <section className="space-y-1 mb-4">
-        <h1 className="text-2xl font-semibold">Tenant Users</h1>
+        <h1 className="text-2xl font-semibold">{tenant.name}</h1>
         <p className="text-sm text-zinc-400">
-          Tenant: <span className="font-medium text-zinc-100">{tenant.name}</span>
+          Tenant User Management · Update roles for members of this municipality.
         </p>
         <p className="text-xs text-zinc-500">
           {members.length}{" "}
@@ -124,7 +118,8 @@ export default async function TenantUsersPage() {
                   colSpan={3}
                   className="px-4 py-6 text-center text-sm text-zinc-500"
                 >
-                  No members found for this tenant.
+                  No users are currently assigned to this tenant. Invite users
+                  and add them to this municipality to manage their roles here.
                 </td>
               </tr>
             )}
